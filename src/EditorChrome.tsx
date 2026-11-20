@@ -87,16 +87,22 @@ function HighlightButton({ ed, on, color, size = 16 }: { ed: Editor | null; on: 
   );
 }
 
-/** Undo and redo for whichever scene is active, always within reach in the title bar. */
+/** Undo and redo for the area you last used: the binder's edits, or the active scene's text. */
 export function HistoryButtons() {
   const ed = useActiveEditor();
   const state = useEditorState({ editor: ed, selector: ({ editor }) => ({ undo: !!editor?.can().undo(), redo: !!editor?.can().redo() }) });
+  const binder = useStore((s) => s.historyScope === "binder");
+  const nextUndo = useStore((s) => s.binderUndo[s.binderUndo.length - 1]);
+  const nextRedo = useStore((s) => s.binderRedo[s.binderRedo.length - 1]);
+  const canUndo = binder ? !!nextUndo : !!ed && !!state?.undo;
+  const canRedo = binder ? !!nextRedo : !!ed && !!state?.redo;
+  const tip = (verb: string, e?: { label: string }) => (binder && e ? `${verb} ${e.label.toLowerCase()}` : verb);
   return (
     <div className="icon-group" role="group" aria-label="Undo and redo">
-      <button className="icon-btn" aria-label="Undo" data-tip="Undo" data-tip-kbd={`${MOD}Z`} disabled={!ed || !state?.undo} onMouseDown={keepFocus} onClick={() => ed?.chain().focus().undo().run()}>
+      <button className="icon-btn" aria-label="Undo" data-tip={tip("Undo", nextUndo)} data-tip-kbd={`${MOD}Z`} disabled={!canUndo} onMouseDown={keepFocus} onClick={() => (binder ? useStore.getState().undoBinder() : ed?.chain().focus().undo().run())}>
         <Icon name="undo" size={18} />
       </button>
-      <button className="icon-btn" aria-label="Redo" data-tip="Redo" data-tip-kbd={`${MOD}${SHIFT}Z`} disabled={!ed || !state?.redo} onMouseDown={keepFocus} onClick={() => ed?.chain().focus().redo().run()}>
+      <button className="icon-btn" aria-label="Redo" data-tip={tip("Redo", nextRedo)} data-tip-kbd={`${MOD}${SHIFT}Z`} disabled={!canRedo} onMouseDown={keepFocus} onClick={() => (binder ? useStore.getState().redoBinder() : ed?.chain().focus().redo().run())}>
         <Icon name="redo" size={18} />
       </button>
     </div>

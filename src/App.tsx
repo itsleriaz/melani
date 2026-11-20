@@ -695,6 +695,16 @@ function Workspace() {
       if (e.key === "Escape" && st.focusMode && !st.paletteOpen) return st.set({ focusMode: false });
       if (!mod) return;
       const go = (f: () => void) => (e.preventDefault(), f());
+      // Cmd+Z in the text is the editor's own; elsewhere it follows the area you last used.
+      if (k === "z" || (k === "y" && !IS_MAC)) {
+        const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
+        if (st.historyScope === "binder" && !typing) {
+          e.preventDefault();
+          if (e.shiftKey || k === "y") st.redoBinder();
+          else st.undoBinder();
+        }
+        return;
+      }
       if (e.shiftKey && k === "f") go(() => st.openSearch());
       else if (k === "f") go(() => st.set({ findOpen: true, findFocus: st.findFocus + 1 }));
       else if (k === "k" || (e.shiftKey && k === "p")) go(() => st.set({ paletteOpen: true }));
@@ -713,6 +723,22 @@ function Workspace() {
   }, []);
 
   const focus = s.focusMode;
+  // Remember whether you last used the binder or the text, so undo and redo act on the right one.
+  useEffect(() => {
+    const mark = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest) return;
+      if (t.closest(".binder")) useStore.setState({ historyScope: "binder" });
+      else if (t.closest(".editor-scroll, .formatbar")) useStore.setState({ historyScope: "text" });
+    };
+    document.addEventListener("pointerdown", mark, true);
+    document.addEventListener("focusin", mark);
+    return () => {
+      document.removeEventListener("pointerdown", mark, true);
+      document.removeEventListener("focusin", mark);
+    };
+  }, []);
+
   // Entering focus mode puts the cursor back in the text, so the current paragraph lights up.
   useEffect(() => {
     if (focus) getActiveEditor()?.commands.focus();

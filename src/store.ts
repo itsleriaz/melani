@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CodexEntry, emptyEntry } from "./codexTypes";
 import { emptyStats, Goals, parseStats, recordTotal, Stats } from "./stats";
 import { Collection, defaultRule } from "./collectionRules";
+import { BinderEntry, pickSelection, pushEntry } from "./binderHistory";
 import { addChild, BinderNode, canContain, findNode, findParent, leaves, mapNodes, moveNode, moveNodes, orderedIds, topLevelIds, newNode, NodeType, removeNode, updateNode, DropPos } from "./tree";
 
 /** What project.json holds. */
@@ -166,6 +167,13 @@ interface State {
   openProject: (dir: string) => Promise<void>;
   createProject: (dir: string, title: string) => Promise<void>;
   closeProject: () => Promise<void>;
+  /** Undo and redo for binder edits (moves, renames, trashing). Scene text has its own history in each editor. */
+  binderUndo: BinderEntry[];
+  binderRedo: BinderEntry[];
+  /** Which history Cmd+Z and the title bar buttons act on: the one for the area you last used. */
+  historyScope: "text" | "binder";
+  undoBinder: () => void;
+  redoBinder: () => void;
   select: (id: string) => void;
   addNode: (type: NodeType, parentId: string | null) => Promise<void>;
   rename: (id: string, title: string) => void;
@@ -214,8 +222,10 @@ export const useStore = create<State>((set, get) => {
       if (dir) void invoke("write_stats", { dir, content: JSON.stringify(stats, null, 2) }).catch((e) => set({ error: String(e) }));
     }, 1000);
   };
-  const saveBinder = async (nodes: BinderNode[]) => {
+  /** Write the binder. `label` names the edit for undo; pass null for a change that must not be undoable. */
+  const saveBinder = async (nodes: BinderNode[], label: string | null = "Edit") => {
     const dir = get().dir;
+    if (label) set({ binderUndo: pushEntry(get().binderUndo, { label, nodes: get().nodes, selectedId: get().selectedId, at: Date.now() }), binderRedo: [] });
     set({ nodes });
     if (!dir) return;
     try {
@@ -233,7 +243,7 @@ export const useStore = create<State>((set, get) => {
     const recent = [dir, ...get().recent.filter((r) => r !== dir)].slice(0, 8);
     persist("recent", recent);
     const first = o.binder.nodes.flatMap(leaves)[0];
-    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
+    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
     void invoke<string>("read_stats", { dir })
       .then((raw) => get().dir === dir && set({ stats: parseStats(raw), statsLoaded: true }))
       .catch(() => get().dir === dir && set({ statsLoaded: true }));
@@ -255,6 +265,9 @@ export const useStore = create<State>((set, get) => {
       void invoke("save_project_meta", { dir, meta: next }).catch((e) => set({ error: String(e) }));
     },
     nodes: [],
+    binderUndo: [],
+    binderRedo: [],
+    historyScope: "text",
     selectedId: null,
     uncleanExit: false,
     recovery: [],
@@ -393,7 +406,21 @@ export const useStore = create<State>((set, get) => {
     closeProject: async () => {
       const dir = get().dir;
       if (dir) await invoke("close_project", { dir }).catch(() => {});
-      set({ dir: null, nodes: [], selectedId: null, counts: {}, recovery: [] });
+      set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], selectedId: null, counts: {}, recovery: [] });
+    },
+    undoBinder: () => {
+      const { binderUndo, binderRedo, nodes, selectedId } = get();
+      const e = binderUndo[binderUndo.length - 1];
+      if (!e) return;
+      set({ binderUndo: binderUndo.slice(0, -1), binderRedo: [...binderRedo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
+      void saveBinder(e.nodes, null);
+    },
+    redoBinder: () => {
+      const { binderUndo, binderRedo, nodes, selectedId } = get();
+      const e = binderRedo[binderRedo.length - 1];
+      if (!e) return;
+      set({ binderRedo: binderRedo.slice(0, -1), binderUndo: [...binderUndo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
+      void saveBinder(e.nodes, null);
     },
     select: (id) => set({ selectedId: id, codexId: null, bookOutline: false, statsView: false, collectionId: null, multi: [] }),
     addNode: async (type, parentId) => {
@@ -409,7 +436,7 @@ export const useStore = create<State>((set, get) => {
       if (!canContain(parent?.type ?? null, type)) return;
       const id = await invoke<string>("new_id");
       const title = type === "chapter" ? "New chapter" : type === "part" ? "New part" : type === "note" ? "New note" : "New scene";
-      await saveBinder(addChild(get().nodes, parentId, newNode(id, type, title)));
+      await saveBinder(addChild(get().nodes, parentId, newNode(id, type, title)), `New ${type}`);
       if (type === "scene" || type === "note") set({ selectedId: id });
     },
     renameSceneField: (from, to) => {
@@ -421,6 +448,7 @@ export const useStore = create<State>((set, get) => {
           const { [from]: v, ...rest } = n.fields;
           return { ...n, fields: { ...rest, [to]: v } };
         }),
+        "Rename field",
       );
     },
     removeSceneField: (name) => {
@@ -431,13 +459,14 @@ export const useStore = create<State>((set, get) => {
           const { [name]: _gone, ...rest } = n.fields;
           return { ...n, fields: rest };
         }),
+        "Remove field",
       );
     },
-    rename: (id, title) => void saveBinder(updateNode(get().nodes, id, { title: title.trim() || "Untitled" })),
-    patch: (id, p) => void saveBinder(updateNode(get().nodes, id, p)),
+    rename: (id, title) => void saveBinder(updateNode(get().nodes, id, { title: title.trim() || "Untitled" }), "Rename"),
+    patch: (id, p) => void saveBinder(updateNode(get().nodes, id, p), "Edit details"),
     move: (id, target, pos) => {
       const next = moveNode(get().nodes, id, target, pos);
-      if (next !== get().nodes) void saveBinder(next);
+      if (next !== get().nodes) void saveBinder(next, findNode(get().nodes, target)?.type === "trash" && pos === "inside" ? "Move to trash" : "Move");
     },
     renamingId: null,
     exportOpen: false,
@@ -462,17 +491,17 @@ export const useStore = create<State>((set, get) => {
         const dup = await copy(orig, true);
         const parent = findParent(get().nodes, id);
         const added = addChild(get().nodes, parent?.id ?? null, dup);
-        await saveBinder(moveNode(added, dup.id, id, "after"));
+        await saveBinder(moveNode(added, dup.id, id, "after"), "Duplicate");
         set({ selectedId: dup.id, codexId: null });
       } catch (e) {
         set({ error: String(e) });
       }
     },
     multi: [],
-    patchMany: (ids, p) => void saveBinder(ids.reduce((acc, id) => updateNode(acc, id, p), get().nodes)),
+    patchMany: (ids, p) => void saveBinder(ids.reduce((acc, id) => updateNode(acc, id, p), get().nodes), "Edit details"),
     moveMany: (ids, target, pos) => {
       const next = moveNodes(get().nodes, ids, target, pos);
-      if (next !== get().nodes) void saveBinder(next);
+      if (next !== get().nodes) void saveBinder(next, findNode(get().nodes, target)?.type === "trash" && pos === "inside" ? "Move to trash" : "Move");
     },
     trashMany: (ids) => {
       const trash = get().nodes.find((n) => n.type === "trash");
@@ -488,7 +517,7 @@ export const useStore = create<State>((set, get) => {
       const nodes = get().nodes;
       const [without, node] = removeNode(nodes, id);
       if (!node) return;
-      void saveBinder(addChild(without, null, node));
+      void saveBinder(addChild(without, null, node), "Restore");
     },
     deleteForever: async (ids) => {
       const dir = get().dir;
@@ -512,7 +541,9 @@ export const useStore = create<State>((set, get) => {
         // The binder first: a crash in between leaves stray files, never a scene with no text.
         let nodes = get().nodes;
         for (const n of doomed) nodes = removeNode(nodes, n.id)[0];
-        await saveBinder(nodes);
+        // The files are about to go, so earlier binder states that still list these scenes can no longer be restored.
+        set({ binderUndo: [], binderRedo: [] });
+        await saveBinder(nodes, null);
         const cols = get().collections;
         if (cols.some((c) => c.ids.some((id) => gone.has(id)))) saveCollections(cols.map((c) => ({ ...c, ids: c.ids.filter((id) => !gone.has(id)) })));
         await invoke("delete_scenes", { dir, ids: files });
