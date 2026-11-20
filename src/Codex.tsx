@@ -290,7 +290,7 @@ export function CodexEditor({ id, compact = false }: { id: string; compact?: boo
         <button
           className="btn danger-btn"
           onClick={() => {
-            if (window.confirm(`Delete "${entry.name}"? This cannot be undone.`)) {
+            if (window.confirm(`Delete "${entry.name}"? You can undo it for a few seconds afterwards.`)) {
               dirty.current = false;
               void deleteEntry(id);
             }

@@ -140,7 +140,7 @@ export function entryMenu(entry: CodexEntry): MenuEntry[] {
       icon: "trash",
       danger: true,
       onSelect: () => {
-        if (window.confirm(`Delete "${entry.name}"? This cannot be undone.`)) void s.deleteEntry(entry.id);
+        if (window.confirm(`Delete "${entry.name}"? You can undo it for a few seconds afterwards.`)) void s.deleteEntry(entry.id);
       },
     },
   ];

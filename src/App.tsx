@@ -546,8 +546,13 @@ function Toast() {
   const toast = useStore((s) => s.toast);
   if (!toast) return null;
   return (
-    <div key={toast.id} className="toast" role="status" aria-live="polite">
-      {toast.text}
+    <div key={toast.id} className={`toast ${toast.action ? "has-action" : ""}`} role="status" aria-live="polite">
+      <span>{toast.text}</span>
+      {toast.action && (
+        <button className="toast-action" onClick={toast.action.run}>
+          {toast.action.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -178,8 +178,9 @@ interface State {
   /** Which history Cmd+Z and the title bar buttons act on: the one for the area you last used. */
   historyScope: "text" | "binder";
   /** A short message shown at the bottom of the window for a moment, for things that happen without other feedback. */
-  toast: { id: number; text: string } | null;
-  showToast: (text: string) => void;
+  toast: { id: number; text: string; action?: { label: string; run: () => void } } | null;
+  /** With an action (such as Undo) the message stays up a little longer and can be clicked. */
+  showToast: (text: string, action?: { label: string; run: () => void }) => void;
   undoBinder: () => void;
   redoBinder: () => void;
   select: (id: string) => void;
@@ -302,10 +303,10 @@ export const useStore = create<State>((set, get) => {
     binderRedo: [],
     historyScope: "text",
     toast: null,
-    showToast: (text) => {
+    showToast: (text, action) => {
       const id = Date.now() + Math.random();
-      set({ toast: { id, text } });
-      window.setTimeout(() => get().toast?.id === id && set({ toast: null }), 2800);
+      set({ toast: { id, text, action } });
+      window.setTimeout(() => get().toast?.id === id && set({ toast: null }), action ? 7000 : 2800);
     },
     selectedId: null,
     uncleanExit: false,
@@ -416,7 +417,19 @@ export const useStore = create<State>((set, get) => {
     deleteEntry: async (id) => {
       const dir = get().dir;
       if (!dir) return;
+      // Keep what is needed to put it back: the entry's fields and its text.
+      const entry = get().codex.find((e) => e.id === id);
+      const body = entry ? await invoke<string>("read_codex_body", { dir, id }).catch(() => null) : null;
       await invoke("delete_codex_entry", { dir, id });
+      if (entry && body !== null) {
+        get().showToast(`Deleted “${entry.name}”`, {
+          label: "Undo",
+          run: () => {
+            set({ toast: null });
+            if (get().dir === dir) void get().saveEntry(entry, body);
+          },
+        });
+      }
       set({ codexId: get().codexId === id ? null : get().codexId, refId: get().refId === id ? null : get().refId });
       await get().loadCodex();
     },
