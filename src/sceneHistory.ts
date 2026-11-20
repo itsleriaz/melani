@@ -130,20 +130,30 @@ function replaceAll(ed: Editor, doc: Node) {
 }
 
 /**
- * Bring back the stashed history, but only if the scene's text is exactly what it was when
- * the history was taken. Otherwise start fresh.
+ * Bring back the stashed history when a scene is opened.
+ *
+ * - The text is what it was when the history was taken: the whole history comes back.
+ * - The text changed while the scene was closed (a snapshot restore, replace all, another program): the old
+ *   history comes back and the new text goes on top as one more step, so Cmd+Z takes the change back.
+ * - There is no history, or the file only differs by how it is written (`sameText`): start fresh.
  */
-export function restoreHistory(s: Stash | null, ed: Editor) {
+export function restoreHistory(s: Stash | null, ed: Editor, opts: { sameText?: (stashed: Node) => boolean } = {}) {
   const loaded = ed.state.doc;
   resetHistory(ed);
-  if (!s || !same(s.docs[s.at], loaded.toJSON())) return;
+  if (!s) return;
+  const schema = ed.state.schema;
+  const exact = same(s.docs[s.at], loaded.toJSON());
   try {
-    const schema = ed.state.schema;
     const docs = s.docs.map((d) => Node.fromJSON(schema, d));
+    if (!exact && opts.sameText?.(docs[s.at]) !== false) return;
     replaceAll(ed, docs[0]);
     resetHistory(ed);
     for (let i = 1; i < docs.length; i++) replayTo(ed, docs[i]);
     for (let i = docs.length - 1; i > s.at; i--) undo(ed.state, ed.view.dispatch);
+    if (!exact) {
+      // The outside change: one step on top of the old history.
+      ed.view.dispatch(closeHistory(ed.state.tr.replaceWith(0, ed.state.doc.content.size, loaded.content)));
+    }
     if (same(ed.state.doc.toJSON(), loaded.toJSON())) return;
   } catch {
     /* fall through: put the loaded text back */

@@ -88,7 +88,7 @@ describe("scene history", async () => {
     expect(text(b)).toBe("A");
   });
 
-  it("starts fresh when the text changed outside the app", async () => {
+  it("starts fresh when no way to compare the text is given", async () => {
     const a = fakeEditor("World");
     type(a, "!");
     await stashHistory("/p", "s3", a);
@@ -132,6 +132,42 @@ describe("scene history", async () => {
     disk.set("/p/s6", "{}");
     await stashHistory("/p", "s6", a);
     expect(disk.size).toBe(0);
+  });
+});
+
+describe("a scene that changed while it was closed", () => {
+  const changed = async (id: string) => {
+    const a = fakeEditor("One");
+    type(a, " two");
+    type(a, " three");
+    await stashHistory("/p", id, a);
+    return await loadStash("/p", id);
+  };
+
+  it("opens with its old history and the outside change as one undoable step", async () => {
+    const s = await changed("c1");
+    const b = fakeEditor("Replaced entirely");
+    restoreHistory(s, b, { sameText: () => false });
+    expect(text(b)).toBe("Replaced entirely");
+    doUndo(b);
+    expect(text(b)).toBe("One two three");
+    doUndo(b);
+    expect(text(b)).toBe("One two");
+    doUndo(b);
+    expect(text(b)).toBe("One");
+    expect(doUndo(b)).toBe(false);
+    doRedo(b);
+    doRedo(b);
+    doRedo(b);
+    doRedo(b);
+    expect(text(b)).toBe("Replaced entirely");
+  });
+
+  it("starts fresh when the file only reads differently", async () => {
+    const b = fakeEditor("One   two three");
+    restoreHistory(await changed("c2"), b, { sameText: () => true });
+    expect(undoDepth(b.state)).toBe(0);
+    expect(text(b)).toBe("One   two three");
   });
 });
 

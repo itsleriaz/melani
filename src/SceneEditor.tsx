@@ -6,6 +6,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { Focus } from "@tiptap/extensions";
 import { closeHistory } from "@tiptap/pm/history";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import Typography from "@tiptap/extension-typography";
 import { Highlight } from "./Highlight";
 import { Footnote } from "./Footnote";
@@ -323,7 +324,12 @@ export function SceneEditor({ id }: { id: string }) {
     applyComments(ed, comments);
     useAi.getState().setPending(id, pendingSids(ed.state.doc).length);
     // The first load must not be undoable; bring back this scene's earlier undo steps if its text is unchanged.
-    if (!external) restoreHistory(stash, ed);
+    if (!external) {
+      const serializer = (ed as unknown as { markdown?: { serialize(json: unknown): string } }).markdown;
+      const asText = (d: PMNode) => (serializer ? serializer.serialize((pendingSids(d).length > 0 ? stripPending(d) : d).toJSON()) : "");
+      // A stashed document that reads the same as the file only differs in how it is stored: not a real change.
+      restoreHistory(stash, ed, { sameText: (old) => !!serializer && asText(old) === asText(ed.state.doc) });
+    }
     loadedOnce.current = true;
     loading.current = false;
 
