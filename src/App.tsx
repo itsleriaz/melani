@@ -66,7 +66,7 @@ function Welcome() {
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey)) return;
       if (e.key.toLowerCase() === "n") (e.preventDefault(), void create());
       if (e.key.toLowerCase() === "o") (e.preventDefault(), void openExisting());
       if (e.key === ",") (e.preventDefault(), openSettings());
@@ -690,7 +690,8 @@ function Workspace() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
+      // On macOS only Cmd is the shortcut key; Ctrl+E/F/K/N/O are text-editing keys (end of line, etc.).
+      const mod = IS_MAC ? e.metaKey : e.ctrlKey;
       const k = e.key.toLowerCase();
       const st = useStore.getState();
       if (e.key === "Escape" && st.focusMode && !st.paletteOpen) return st.set({ focusMode: false });
