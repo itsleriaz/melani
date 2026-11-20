@@ -65,6 +65,8 @@ export function SearchPanel() {
     const n = ++seq.current;
     if (!query.q) return setGroups(null);
     const t = window.setTimeout(async () => {
+      // Search the saved files, so first save what is still being typed.
+      await flushAll().catch(() => {});
       const r = await invoke<Group[]>("search_groups", { dir, query: query.q, options, sceneIds: ids, codex: searchCodex }).catch(() => []);
       if (n === seq.current) setGroups(r);
     }, 160);
