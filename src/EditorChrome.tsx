@@ -96,7 +96,7 @@ export function HistoryButtons() {
   const nextRedo = useStore((s) => s.binderRedo[s.binderRedo.length - 1]);
   const canUndo = binder ? !!nextUndo : !!ed && !!state?.undo;
   const canRedo = binder ? !!nextRedo : !!ed && !!state?.redo;
-  const tip = (verb: string, e?: { label: string }) => (binder && e ? `${verb} ${e.label.toLowerCase()}` : verb);
+  const tip = (verb: string, e?: { label: string }) => (binder ? (e ? `${verb} ${e.label.toLowerCase()} (binder)` : `${verb} (binder)`) : `${verb} (text)`);
   return (
     <div className="icon-group" role="group" aria-label="Undo and redo">
       <button className="icon-btn" aria-label="Undo" data-tip={tip("Undo", nextUndo)} data-tip-kbd={`${MOD}Z`} disabled={!canUndo} onMouseDown={keepFocus} onClick={() => (binder ? useStore.getState().undoBinder() : ed?.chain().focus().undo().run())}>

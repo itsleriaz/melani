@@ -34,6 +34,14 @@ describe("binder undo", () => {
     expect(ids()).toBe("c1:b c2:a t:");
   });
 
+  it("says what was undone and redone", () => {
+    useStore.getState().move("a", "c2", "inside");
+    useStore.getState().undoBinder();
+    expect(useStore.getState().toast?.text).toBe("Undid move");
+    useStore.getState().redoBinder();
+    expect(useStore.getState().toast?.text).toBe("Redid move");
+  });
+
   it("labels moving to the trash and saves the binder on undo", () => {
     useStore.getState().trash("b");
     const undo = useStore.getState().binderUndo;

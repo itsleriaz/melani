@@ -177,6 +177,9 @@ interface State {
   binderRedo: BinderEntry[];
   /** Which history Cmd+Z and the title bar buttons act on: the one for the area you last used. */
   historyScope: "text" | "binder";
+  /** A short message shown at the bottom of the window for a moment, for things that happen without other feedback. */
+  toast: { id: number; text: string } | null;
+  showToast: (text: string) => void;
   undoBinder: () => void;
   redoBinder: () => void;
   select: (id: string) => void;
@@ -298,6 +301,12 @@ export const useStore = create<State>((set, get) => {
     binderUndo: [],
     binderRedo: [],
     historyScope: "text",
+    toast: null,
+    showToast: (text) => {
+      const id = Date.now() + Math.random();
+      set({ toast: { id, text } });
+      window.setTimeout(() => get().toast?.id === id && set({ toast: null }), 2800);
+    },
     selectedId: null,
     uncleanExit: false,
     recovery: [],
@@ -446,6 +455,7 @@ export const useStore = create<State>((set, get) => {
       if (!e) return;
       set({ binderUndo: binderUndo.slice(0, -1), binderRedo: [...binderRedo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
       void saveBinder(e.nodes, null);
+      get().showToast(`Undid ${e.label.toLowerCase()}`);
     },
     redoBinder: () => {
       const { binderUndo, binderRedo, nodes, selectedId } = get();
@@ -453,6 +463,7 @@ export const useStore = create<State>((set, get) => {
       if (!e) return;
       set({ binderRedo: binderRedo.slice(0, -1), binderUndo: [...binderUndo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
       void saveBinder(e.nodes, null);
+      get().showToast(`Redid ${e.label.toLowerCase()}`);
     },
     select: (id) => set({ selectedId: id, codexId: null, bookOutline: false, statsView: false, collectionId: null, multi: [] }),
     addNode: async (type, parentId) => {

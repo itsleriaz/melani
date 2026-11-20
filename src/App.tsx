@@ -541,6 +541,17 @@ function TitleBar() {
   );
 }
 
+/** A brief message at the bottom of the window. */
+function Toast() {
+  const toast = useStore((s) => s.toast);
+  if (!toast) return null;
+  return (
+    <div key={toast.id} className="toast" role="status" aria-live="polite">
+      {toast.text}
+    </div>
+  );
+}
+
 function ProgressBar({ value }: { value: number }) {
   const v = Math.max(0, Math.min(1, value));
   return (
@@ -783,6 +794,7 @@ function Workspace() {
       </div>
       {focus ? <FocusHud /> : <StatusBar manuscriptWords={manuscriptWords} />}
       <HoverCard />
+      <Toast />
       <SelectionMenu />
       <FootnotePopover />
       {ai.run && <RunDialog key={ai.run.tool + ai.run.from + ai.run.to} />}
