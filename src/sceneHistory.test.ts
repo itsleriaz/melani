@@ -135,6 +135,25 @@ describe("scene history", async () => {
   });
 });
 
+describe("text that arrives from outside the editor", () => {
+  it("is one undo step on top of the history, which stays intact", () => {
+    const ed = fakeEditor("One");
+    type(ed, " two");
+    // A snapshot restore or replace-all: the whole scene text is swapped, as reload() does.
+    const schema = ed.state.schema;
+    ed.view.dispatch(closeHistory(ed.state.tr));
+    ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, schema.node("doc", null, [schema.node("paragraph", null, [schema.text("Replaced")])]).content));
+    expect(text(ed)).toBe("Replaced");
+    doUndo(ed);
+    expect(text(ed)).toBe("One two");
+    doUndo(ed);
+    expect(text(ed)).toBe("One");
+    doRedo(ed);
+    doRedo(ed);
+    expect(text(ed)).toBe("Replaced");
+  });
+});
+
 describe("saved history files", () => {
   const doc = (t: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: t }] }] });
   const stash = (n: number, at = n - 1): Stash => ({ docs: Array.from({ length: n }, (_, i) => doc(`v${i}`)), at });

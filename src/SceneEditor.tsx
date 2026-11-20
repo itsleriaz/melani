@@ -5,6 +5,7 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { Focus } from "@tiptap/extensions";
+import { closeHistory } from "@tiptap/pm/history";
 import Typography from "@tiptap/extension-typography";
 import { Highlight } from "./Highlight";
 import { Footnote } from "./Footnote";
@@ -91,6 +92,9 @@ export function SceneEditor({ id }: { id: string }) {
   const codexVersion = useStore((s) => s.codexVersion);
   const mtime = useRef(0);
   const loading = useRef(true);
+  /** The text as last read from or written to the file, to tell a real outside change from our own save. */
+  const lastText = useRef<string | null>(null);
+  const loadedOnce = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const typewriterRef = useRef(typewriter);
@@ -180,6 +184,7 @@ export function SceneEditor({ id }: { id: string }) {
       const doc = ed.state.doc;
       const md = sceneMarkdown(ed);
       await invoke("write_scene", { dir, id, content: md });
+      lastText.current = md;
       // Saved, and nothing typed meanwhile: the journal is no longer needed.
       if (!dirty.current) {
         window.clearTimeout(journalTimer.current);
@@ -273,7 +278,8 @@ export function SceneEditor({ id }: { id: string }) {
     const ed = editorRef.current;
     if (!ed) return;
     // Loading the disk version over unsaved edits discards them, so drop their journal too.
-    if (dirty.current) journal(() => invoke("clear_recovery", { dir, id }));
+    const hadEdits = dirty.current;
+    if (hadEdits) journal(() => invoke("clear_recovery", { dir, id }));
     const [text, m, metaRaw, stash] = await Promise.all([
       invoke<string>("read_scene", { dir, id }),
       invoke<number>("scene_modified", { dir, id }),
@@ -286,8 +292,19 @@ export function SceneEditor({ id }: { id: string }) {
     } catch {
       /* a damaged sidecar is ignored; the text is what matters */
     }
+    // The file holds what the editor already has (our own save, or a second load racing the first): nothing to do.
+    if (loadedOnce.current && !hadEdits && text === lastText.current) {
+      mtime.current = m;
+      setConflict(false);
+      return;
+    }
+    // After the first load, new text comes from outside (a snapshot restore, replace all, another program):
+    // it goes in as one step that Cmd+Z can take back, instead of wiping the undo history.
+    const external = loadedOnce.current;
     loading.current = true;
+    if (external) ed.view.dispatch(closeHistory(ed.state.tr));
     ed.commands.setContent(text, { emitUpdate: false, contentType: "markdown" });
+    lastText.current = text;
 
     // Put pending suggestions back; any that cannot be placed become orphans.
     const records = meta.suggestions ?? [];
@@ -305,8 +322,9 @@ export function SceneEditor({ id }: { id: string }) {
     useAi.getState().setSceneComments(id, comments);
     applyComments(ed, comments);
     useAi.getState().setPending(id, pendingSids(ed.state.doc).length);
-    // The load itself must not be undoable; bring back this scene's earlier undo steps if its text is unchanged.
-    restoreHistory(stash, ed);
+    // The first load must not be undoable; bring back this scene's earlier undo steps if its text is unchanged.
+    if (!external) restoreHistory(stash, ed);
+    loadedOnce.current = true;
     loading.current = false;
 
     lastMeta.current = metaRaw.trim() === "{}" ? "" : metaRaw;
