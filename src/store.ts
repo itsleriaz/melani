@@ -285,6 +285,8 @@ export const useStore = create<State>((set, get) => {
         if (h && get().dir === dir && !get().binderUndo.length && !get().binderRedo.length) set({ binderUndo: h.undo, binderRedo: h.redo });
       })
       .catch(() => {});
+    // A whole-project backup, if the last one is old enough. Quietly: it is a safety net, not an event.
+    void invoke("backup_if_due", { dir }).catch(() => {});
     void invoke<string>("read_history", { dir, name: "codex" })
       .then((raw) => get().dir === dir && raw && set({ codexTrash: parseCodexTrash(raw) }))
       .catch(() => {});

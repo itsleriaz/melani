@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { buildActivity, MAX_CODEX_TRASH, parseCodexTrash, serializeCodexTrash, timeAgo, type CodexTrashItem, type SnapshotInfo } from "./activity";
+import { buildActivity, formatSize, MAX_CODEX_TRASH, parseCodexTrash, serializeCodexTrash, timeAgo, type CodexTrashItem, type SnapshotInfo } from "./activity";
 import type { BinderEntry } from "./binderHistory";
 import { emptyEntry } from "./codexTypes";
 
@@ -70,5 +70,14 @@ describe("saved deleted codex entries", () => {
     expect(parseCodexTrash("{ nope")).toEqual([]);
     expect(parseCodexTrash(JSON.stringify({ v: 2, items: [] }))).toEqual([]);
     expect(parseCodexTrash(JSON.stringify({ v: 1, items: [{ at: 1 }, trash("ok", 5), null] }))).toHaveLength(1);
+  });
+});
+
+describe("sizes", () => {
+  it("reads naturally", () => {
+    expect(formatSize(812)).toBe("812 B");
+    expect(formatSize(14 * 1024 + 300)).toBe("14 KB");
+    expect(formatSize(3.2 * 1024 * 1024)).toBe("3.2 MB");
+    expect(formatSize(48 * 1024 * 1024)).toBe("48 MB");
   });
 });

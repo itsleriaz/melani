@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 mod ai;
+mod backup;
 mod codex;
 mod export;
 mod extract;
@@ -254,6 +255,22 @@ async fn delete_scenes(dir: String, ids: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command]
+async fn backup_if_due(dir: String) -> Result<Option<backup::BackupInfo>, String> {
+    backup::create_if_due(Path::new(&dir)).map_err(s)
+}
+#[tauri::command]
+async fn create_backup(dir: String) -> Result<backup::BackupInfo, String> {
+    backup::create(Path::new(&dir)).map_err(s)
+}
+#[tauri::command]
+async fn list_backups(dir: String) -> Vec<backup::BackupInfo> {
+    backup::list(Path::new(&dir))
+}
+#[tauri::command]
+async fn restore_backup_copy(dir: String, name: String) -> Result<String, String> {
+    backup::restore_copy(Path::new(&dir), &name).map(|p| p.display().to_string()).map_err(s)
+}
+#[tauri::command]
 async fn write_history(dir: String, name: String, content: String) -> Result<(), String> {
     history::write(Path::new(&dir), &name, &content).map_err(s)
 }
@@ -328,6 +345,10 @@ pub fn run() {
             write_scene_meta,
             write_recovery,
             clear_recovery,
+            backup_if_due,
+            create_backup,
+            list_backups,
+            restore_backup_copy,
             write_history,
             read_history,
             clear_history,

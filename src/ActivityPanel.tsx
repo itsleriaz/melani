@@ -2,7 +2,8 @@
 // Everything you did that can be taken back, in one list. Typing is not here: Cmd+Z in the text undoes that.
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { type ActivityAction, type ActivityItem, buildActivity, timeAgo, type SnapshotInfo } from "./activity";
+import { type ActivityAction, type ActivityItem, type BackupInfo, buildActivity, formatSize, timeAgo, type SnapshotInfo } from "./activity";
+import { flushAll, saveHistoryAll } from "./SceneEditor";
 import { MOD } from "./platform";
 import { useStore } from "./store";
 
@@ -14,6 +15,8 @@ export function ActivityPanel() {
   const binderRedo = useStore((s) => s.binderRedo);
   const codexTrash = useStore((s) => s.codexTrash);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [busy, setBusy] = useState(false);
   // So "5 min ago" moves on while the panel is open.
   const [now, setNow] = useState(Date.now());
 
@@ -23,6 +26,9 @@ export function ActivityPanel() {
       setNow(Date.now());
       void invoke<SnapshotInfo[]>("list_snapshots", { dir })
         .then((l) => live && setSnapshots(l))
+        .catch(() => {});
+      void invoke<BackupInfo[]>("list_backups", { dir })
+        .then((l) => live && setBackups(l))
         .catch(() => {});
     };
     load();
@@ -34,6 +40,43 @@ export function ActivityPanel() {
   }, [dir]);
 
   const items = useMemo(() => buildActivity({ binderUndo, binderRedo, codexTrash, snapshots }), [binderUndo, binderRedo, codexTrash, snapshots]);
+
+  const backUpNow = async () => {
+    setBusy(true);
+    try {
+      await flushAll();
+      await invoke("create_backup", { dir });
+      setBackups(await invoke<BackupInfo[]>("list_backups", { dir }));
+      useStore.getState().showToast("Backed up the whole project");
+    } catch (e) {
+      useStore.getState().set({ error: `Could not back up: ${e}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Unpack a backup next to the project. It never touches the project itself; the toast offers to open the copy. */
+  const restoreCopy = async (b: BackupInfo) => {
+    setBusy(true);
+    try {
+      const path = await invoke<string>("restore_backup_copy", { dir, name: b.name });
+      const name = path.split(/[\\/]/).pop() ?? path;
+      useStore.getState().showToast(`Restored as “${name}”`, {
+        label: "Open it",
+        run: async () => {
+          useStore.setState({ toast: null });
+          await flushAll();
+          await saveHistoryAll();
+          await useStore.getState().closeProject();
+          await useStore.getState().openProject(path);
+        },
+      });
+    } catch (e) {
+      useStore.getState().set({ error: `Could not restore the backup: ${e}` });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = (a: ActivityAction) => {
     const s = useStore.getState();
@@ -55,6 +98,32 @@ export function ActivityPanel() {
           ))}
         </ul>
       )}
+      <section className="backups" aria-label="Backups">
+        <div className="backups-head">
+          <strong>Backups</strong>
+          <button className="activity-act" disabled={busy} onClick={() => void backUpNow()}>
+            Back up now
+          </button>
+        </div>
+        <p className="activity-hint muted">A copy of the whole project, taken automatically about once a day when you open it. The last 14 are kept. Restoring makes a new folder next to your project and never changes it.</p>
+        {backups.length === 0 ? (
+          <div className="empty-state small">No backups yet.</div>
+        ) : (
+          <ul className="activity-list">
+            {backups.map((b) => (
+              <li key={b.name} className="activity-item">
+                <div className="activity-main">
+                  <span className="activity-title">{new Date(b.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
+                  <span className="activity-meta muted">{formatSize(b.size)}</span>
+                </div>
+                <button className="activity-act" disabled={busy} onClick={() => void restoreCopy(b)}>
+                  Restore as copy
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

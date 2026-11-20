@@ -110,3 +110,18 @@ export function parseCodexTrash(raw: string): CodexTrashItem[] {
     return [];
   }
 }
+
+/** A whole-project backup as the list sees it (the shape the backend returns). */
+export interface BackupInfo {
+  name: string;
+  createdAt: number;
+  size: number;
+}
+
+/** "812 B", "14 KB", "3.2 MB". */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  const mb = bytes / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
