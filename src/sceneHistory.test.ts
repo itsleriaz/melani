@@ -2,71 +2,96 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "@tiptap/pm/model";
 import { EditorState, type Transaction } from "@tiptap/pm/state";
-import { history, undo, undoDepth } from "@tiptap/pm/history";
+import { closeHistory, history, redo, undo, undoDepth } from "@tiptap/pm/history";
 import type { Editor } from "@tiptap/core";
 import { resetHistory, restoreHistory, stashHistory } from "./sceneHistory";
 
-const schema = new Schema({
-  nodes: { doc: { content: "paragraph+" }, paragraph: { content: "text*" }, text: {} },
-});
-const para = (t: string) => schema.node("paragraph", null, t ? [schema.text(t)] : []);
-const doc = (t: string) => schema.node("doc", null, [para(t)]);
+/** Each editor gets its own schema object, as Tiptap does: nodes from one never match another's. */
+const newSchema = () =>
+  new Schema({
+    nodes: { doc: { content: "paragraph+" }, paragraph: { content: "text*" }, text: {} },
+    marks: { strong: {} },
+  });
 
-/** Just enough of an Editor for sceneHistory: a state that dispatch updates. */
-function fakeEditor(d = doc("")) {
-  const ed = { state: EditorState.create({ doc: d, plugins: [history()] }), view: { dispatch: (tr: Transaction) => void (ed.state = ed.state.apply(tr)) } };
-  return ed as unknown as Editor & { state: EditorState };
+type Fake = Editor & { state: EditorState };
+function fakeEditor(text = ""): Fake {
+  const schema = newSchema();
+  const para = schema.node("paragraph", null, text ? [schema.text(text)] : []);
+  const ed = {
+    state: EditorState.create({ doc: schema.node("doc", null, [para]), plugins: [history()] }),
+    view: { dispatch: (tr: Transaction) => void (ed.state = ed.state.apply(tr)) },
+  };
+  return ed as unknown as Fake;
 }
-const type = (ed: ReturnType<typeof fakeEditor>, text: string) => ed.view.dispatch(ed.state.tr.insertText(text, 1));
-const load = (ed: ReturnType<typeof fakeEditor>, t: string) => ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, doc(t).content));
+/** Append text as its own undo event. */
+const type = (ed: Fake, text: string) => {
+  const end = ed.state.doc.content.size - 1;
+  ed.view.dispatch(closeHistory(ed.state.tr.insertText(text, end)));
+};
+const text = (ed: Fake) => ed.state.doc.textContent;
+const doUndo = (ed: Fake) => undo(ed.state, ed.view.dispatch);
+const doRedo = (ed: Fake) => redo(ed.state, ed.view.dispatch);
 
 describe("scene history", () => {
   it("loading a scene is not undoable once the history is reset", () => {
-    const ed = fakeEditor();
-    load(ed, "Loaded text");
-    expect(undoDepth(ed.state)).toBe(1);
+    const ed = fakeEditor("Loaded");
+    type(ed, "!");
     resetHistory(ed);
     expect(undoDepth(ed.state)).toBe(0);
-    expect(ed.state.doc.textContent).toBe("Loaded text");
+    expect(text(ed)).toBe("Loaded!");
   });
 
-  it("undo steps survive closing and reopening a scene with unchanged text", () => {
-    const a = fakeEditor();
-    load(a, "World");
-    resetHistory(a);
-    type(a, "Hello ");
+  it("undo steps survive closing and reopening a scene, even though the new editor has its own schema", () => {
+    const a = fakeEditor("One");
+    type(a, " two");
+    type(a, " three");
     stashHistory("/p", "s1", a);
 
-    const b = fakeEditor();
-    load(b, "Hello World");
+    const b = fakeEditor("One two three");
     restoreHistory("/p", "s1", b);
-    expect(undoDepth(b.state)).toBe(1);
-    undo(b.state, (tr) => void (b.state = b.state.apply(tr)));
-    expect(b.state.doc.textContent).toBe("World");
+    expect(undoDepth(b.state)).toBe(2);
+    doUndo(b);
+    expect(text(b)).toBe("One two");
+    doUndo(b);
+    expect(text(b)).toBe("One");
+    expect(doUndo(b)).toBe(false);
+  });
+
+  it("keeps the redo stack too", () => {
+    const a = fakeEditor("A");
+    type(a, "B");
+    type(a, "C");
+    doUndo(a);
+    expect(text(a)).toBe("AB");
+    stashHistory("/p", "s2", a);
+
+    const b = fakeEditor("AB");
+    restoreHistory("/p", "s2", b);
+    expect(text(b)).toBe("AB");
+    doRedo(b);
+    expect(text(b)).toBe("ABC");
+    doUndo(b);
+    doUndo(b);
+    expect(text(b)).toBe("A");
   });
 
   it("starts fresh when the text changed outside the app", () => {
-    const a = fakeEditor();
-    load(a, "World");
-    resetHistory(a);
-    type(a, "Hello ");
-    stashHistory("/p", "s2", a);
+    const a = fakeEditor("World");
+    type(a, "!");
+    stashHistory("/p", "s3", a);
 
-    const b = fakeEditor();
-    load(b, "Something else entirely");
-    restoreHistory("/p", "s2", b);
+    const b = fakeEditor("Something else entirely");
+    restoreHistory("/p", "s3", b);
     expect(undoDepth(b.state)).toBe(0);
+    expect(text(b)).toBe("Something else entirely");
   });
 
   it("keeps scenes and projects apart", () => {
-    const a = fakeEditor();
-    load(a, "x");
-    resetHistory(a);
+    const a = fakeEditor("x");
     type(a, "y");
-    stashHistory("/p", "s3", a);
-    const b = fakeEditor();
-    load(b, "yx");
-    restoreHistory("/other", "s3", b);
+    stashHistory("/p", "s4", a);
+    const b = fakeEditor("xy");
+    restoreHistory("/other", "s4", b);
     expect(undoDepth(b.state)).toBe(0);
   });
 });

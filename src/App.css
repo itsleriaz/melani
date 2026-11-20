@@ -1158,8 +1158,14 @@ svg[data-icon="collapseAll"] .i-bottom { --dy: 4px; animation: i-chev 0.25s ease
 .fmt-btn.on svg[data-icon="italic"] { animation: i-skew 0.4s ease; }
 .fmt-btn.on svg[data-icon="highlight"] { animation: i-wobble 0.45s ease; }
 .fmt-btn.on svg:is([data-icon="quote"], [data-icon="listBullet"], [data-icon="listOrdered"]) { animation: i-in-left 0.3s ease; }
-.fmt-btn:active:not(:disabled) svg[data-icon="undo"] { animation: i-undo 0.3s ease; }
-.fmt-btn:active:not(:disabled) svg[data-icon="redo"] { animation: i-redo 0.3s ease; }
+.fmt-btn:active:not(:disabled) svg[data-icon="undo"], .icon-btn:active:not(:disabled) svg[data-icon="undo"] { animation: i-undo 0.3s ease; }
+.fmt-btn:active:not(:disabled) svg[data-icon="redo"], .icon-btn:active:not(:disabled) svg[data-icon="redo"] { animation: i-redo 0.3s ease; }
+/* Undo and redo: the arrowhead leans the way it will go on hover; the button is dimmed when there is nothing to do. */
+.icon-group { display: inline-flex; align-items: center; gap: 0; flex: none; }
+.icon-btn .i-head { transition: transform 0.18s cubic-bezier(0.3, 1.4, 0.5, 1); }
+.icon-btn:hover:not(:disabled) .i-back-head { transform: translate(-1.5px, -0.5px); }
+.icon-btn:hover:not(:disabled) .i-fwd-head { transform: translate(1.5px, -0.5px); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
 .fmt-btn:active:not(:disabled) svg:is([data-icon="rule"], [data-icon="footnote"], [data-icon="commentAdd"]) { animation: i-spread 0.3s ease; }
 .fmt-btn.ai:hover svg, .sel-btn.ai:hover svg, .btn.assist:hover svg[data-icon="sparkle"], .accent-icon:hover { animation: i-twinkle 0.5s ease; }
 /* Title bar: focus draws its corners in on hover; typewriter spreads its lines when switched on. */

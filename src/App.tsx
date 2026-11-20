@@ -32,7 +32,7 @@ import { ExtractDialog } from "./ExtractDialog";
 import { SettingsDialog, openSettings } from "./Settings";
 import { ContextMenu, useSuppressBrowserMenu } from "./ContextMenu";
 import { Icon, IconName, Ring } from "./icons";
-import { FormatBar, SelectionMenu } from "./EditorChrome";
+import { FormatBar, HistoryButtons, SelectionMenu } from "./EditorChrome";
 import { TooltipLayer } from "./Tooltip";
 import { createEntryFromSelection } from "./selection";
 import { IS_MAC, MOD, SHIFT } from "./platform";
@@ -458,6 +458,7 @@ function TitleBar() {
       <button className={`icon-btn ${s.leftOpen ? "" : "off"}`} aria-label={s.leftOpen ? "Hide sidebar" : "Show sidebar"} data-tip={`${s.leftOpen ? "Hide" : "Show"} sidebar (${MOD}\\)`} onClick={() => s.set({ leftOpen: !s.leftOpen })}>
         <Icon name="sidebarLeft" size={18} />
       </button>
+      <HistoryButtons />
       <nav className="crumbs" aria-label="Location">
         <button className="crumb root" onClick={() => s.set({ leftTab: "binder", codexId: null })}>
           {s.title}

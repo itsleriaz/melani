@@ -145,8 +145,18 @@ const PATHS = {
   listBullet: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
   listOrdered: <path d="M10 6h10M10 12h10M10 18h10M4 5l1.5-1v4M4 14.5a1.5 1.5 0 1 1 2.5 1L4 18.5h3" />,
   rule: <path d="M4 12h16M8 6.5h.01M12 6.5h.01M16 6.5h.01M8 17.5h.01M12 17.5h.01M16 17.5h.01" />,
-  undo: <path d="M9 14 4 9l5-5M4 9h9a6 6 0 0 1 0 12h-2" />,
-  redo: <path d="m15 14 5-5-5-5M20 9h-9a6 6 0 0 0 0 12h2" />,
+  undo: (
+    <>
+      <path className="i-head i-back-head" d="M9 14 4 9l5-5" />
+      <path className="i-tail" d="M4 9h9a6 6 0 0 1 0 12h-2" />
+    </>
+  ),
+  redo: (
+    <>
+      <path className="i-head i-fwd-head" d="m15 14 5-5-5-5" />
+      <path className="i-tail" d="M20 9h-9a6 6 0 0 0 0 12h2" />
+    </>
+  ),
   home: (
     <>
       <path className="i-roof" d="M4 11 12 4l8 7" />
