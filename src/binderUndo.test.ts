@@ -51,6 +51,22 @@ describe("binder undo", () => {
     expect(ids()).toBe("c1:a,b c2: t:");
   });
 
+  it("undoes and redoes several changes at once", () => {
+    useStore.getState().move("a", "c2", "inside");
+    useStore.getState().rename("b", "Beta");
+    useStore.getState().trash("b");
+    expect(useStore.getState().binderUndo).toHaveLength(3);
+    useStore.getState().undoBinderSteps(3);
+    expect(ids()).toBe("c1:a,b c2: t:");
+    expect(useStore.getState().binderRedo).toHaveLength(3);
+    expect(useStore.getState().toast?.text).toBe("Undid 3 changes");
+    useStore.getState().redoBinderSteps(2);
+    expect(ids()).toBe("c1:b c2:a t:");
+    expect(useStore.getState().binderUndo).toHaveLength(2);
+    useStore.getState().redoBinderSteps(5); // more than there are: just what there is
+    expect(ids()).toBe("c1: c2:a t:b");
+  });
+
   it("a new edit clears the redo stack", () => {
     const s = useStore.getState();
     s.rename("a", "Alpha");

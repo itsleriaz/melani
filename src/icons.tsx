@@ -23,6 +23,7 @@ const PATHS = {
       <path className="i-handle" d="m20 20-3.5-3.5" />
     </>
   ),
+  activity: <path className="i-line" pathLength="1" d="M3 12h4l3-8 4 16 3-8h4" />,
   history: (
     <>
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />

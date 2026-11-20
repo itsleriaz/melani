@@ -5,6 +5,7 @@ import { CodexEntry, emptyEntry } from "./codexTypes";
 import { emptyStats, Goals, parseStats, recordTotal, Stats } from "./stats";
 import { Collection, defaultRule } from "./collectionRules";
 import type { SearchScope } from "./searchScope";
+import { CodexTrashItem, MAX_CODEX_TRASH, parseCodexTrash, serializeCodexTrash } from "./activity";
 import { BinderEntry, parseBinderHistory, pickSelection, pushEntry, serializeBinderHistory } from "./binderHistory";
 import { addChild, BinderNode, canContain, findNode, findParent, leaves, mapNodes, moveNode, moveNodes, orderedIds, topLevelIds, newNode, NodeType, removeNode, updateNode, DropPos } from "./tree";
 
@@ -129,7 +130,7 @@ interface State {
   /** Bumped whenever the codex changes so editors rescan for mentions. */
   codexVersion: number;
   leftTab: "binder" | "codex" | "search" | "collections";
-  rightTab: "inspector" | "reference" | "snapshots" | "comments" | "chat" | "findings";
+  rightTab: "inspector" | "reference" | "snapshots" | "activity" | "comments" | "chat" | "findings";
   stats: Stats;
   /** True once word counts have been read, so the first (empty) total is never recorded. */
   countsLoaded: boolean;
@@ -183,6 +184,12 @@ interface State {
   showToast: (text: string, action?: { label: string; run: () => void }) => void;
   undoBinder: () => void;
   redoBinder: () => void;
+  /** Undo or redo several binder changes at once (the Activity panel's "to here"). */
+  undoBinderSteps: (n: number) => void;
+  redoBinderSteps: (n: number) => void;
+  /** Codex entries deleted recently, newest first, kept with their text so they can be put back. */
+  codexTrash: CodexTrashItem[];
+  restoreDeletedEntry: (id: string) => Promise<void>;
   select: (id: string) => void;
   addNode: (type: NodeType, parentId: string | null) => Promise<void>;
   rename: (id: string, title: string) => void;
@@ -271,12 +278,15 @@ export const useStore = create<State>((set, get) => {
     const recent = [dir, ...get().recent.filter((r) => r !== dir)].slice(0, 8);
     persist("recent", recent);
     const first = o.binder.nodes.flatMap(leaves)[0];
-    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
+    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], codexTrash: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
     void invoke<string>("read_history", { dir, name: "binder" })
       .then((raw) => {
         const h = raw ? parseBinderHistory(raw, get().nodes) : null;
         if (h && get().dir === dir && !get().binderUndo.length && !get().binderRedo.length) set({ binderUndo: h.undo, binderRedo: h.redo });
       })
+      .catch(() => {});
+    void invoke<string>("read_history", { dir, name: "codex" })
+      .then((raw) => get().dir === dir && raw && set({ codexTrash: parseCodexTrash(raw) }))
       .catch(() => {});
     void invoke<string>("read_stats", { dir })
       .then((raw) => get().dir === dir && set({ stats: parseStats(raw), statsLoaded: true }))
@@ -303,6 +313,7 @@ export const useStore = create<State>((set, get) => {
     binderRedo: [],
     historyScope: "text",
     toast: null,
+    codexTrash: [],
     showToast: (text, action) => {
       const id = Date.now() + Math.random();
       set({ toast: { id, text, action } });
@@ -422,16 +433,25 @@ export const useStore = create<State>((set, get) => {
       const body = entry ? await invoke<string>("read_codex_body", { dir, id }).catch(() => null) : null;
       await invoke("delete_codex_entry", { dir, id });
       if (entry && body !== null) {
-        get().showToast(`Deleted “${entry.name}”`, {
-          label: "Undo",
-          run: () => {
-            set({ toast: null });
-            if (get().dir === dir) void get().saveEntry(entry, body);
-          },
-        });
+        const codexTrash = [{ entry, body, at: Date.now() }, ...get().codexTrash.filter((t) => t.entry.id !== id)].slice(0, MAX_CODEX_TRASH);
+        set({ codexTrash });
+        void invoke("write_history", { dir, name: "codex", content: serializeCodexTrash(codexTrash) }).catch(() => {});
+        get().showToast(`Deleted “${entry.name}”`, { label: "Undo", run: () => void get().restoreDeletedEntry(id) });
       }
       set({ codexId: get().codexId === id ? null : get().codexId, refId: get().refId === id ? null : get().refId });
       await get().loadCodex();
+    },
+    restoreDeletedEntry: async (id) => {
+      const dir = get().dir;
+      const item = get().codexTrash.find((t) => t.entry.id === id);
+      if (!dir || !item) return;
+      set({ toast: null });
+      await get().saveEntry(item.entry, item.body);
+      const codexTrash = get().codexTrash.filter((t) => t.entry.id !== id);
+      set({ codexTrash });
+      const op = codexTrash.length ? invoke("write_history", { dir, name: "codex", content: serializeCodexTrash(codexTrash) }) : invoke("clear_history", { dir, name: "codex" });
+      void op.catch(() => {});
+      get().showToast(`Restored “${item.entry.name}”`);
     },
     createEntry: async (type, name) => {
       const id = await invoke<string>("new_id");
@@ -460,23 +480,39 @@ export const useStore = create<State>((set, get) => {
       const dir = get().dir;
       await flushBinderHistory();
       if (dir) await invoke("close_project", { dir }).catch(() => {});
-      set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], selectedId: null, counts: {}, recovery: [] });
+      set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], codexTrash: [], selectedId: null, counts: {}, recovery: [] });
     },
-    undoBinder: () => {
-      const { binderUndo, binderRedo, nodes, selectedId } = get();
-      const e = binderUndo[binderUndo.length - 1];
-      if (!e) return;
-      set({ binderUndo: binderUndo.slice(0, -1), binderRedo: [...binderRedo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
-      void saveBinder(e.nodes, null);
-      get().showToast(`Undid ${e.label.toLowerCase()}`);
+    undoBinder: () => get().undoBinderSteps(1),
+    redoBinder: () => get().redoBinderSteps(1),
+    undoBinderSteps: (n) => {
+      let last: BinderEntry | undefined;
+      let done = 0;
+      for (; done < n; done++) {
+        const { binderUndo, binderRedo, nodes, selectedId } = get();
+        const e = binderUndo[binderUndo.length - 1];
+        if (!e) break;
+        last = e;
+        set({ binderUndo: binderUndo.slice(0, -1), binderRedo: [...binderRedo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
+        set({ nodes: e.nodes });
+      }
+      if (!last) return;
+      void saveBinder(get().nodes, null);
+      get().showToast(done === 1 ? `Undid ${last.label.toLowerCase()}` : `Undid ${done} changes`);
     },
-    redoBinder: () => {
-      const { binderUndo, binderRedo, nodes, selectedId } = get();
-      const e = binderRedo[binderRedo.length - 1];
-      if (!e) return;
-      set({ binderRedo: binderRedo.slice(0, -1), binderUndo: [...binderUndo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
-      void saveBinder(e.nodes, null);
-      get().showToast(`Redid ${e.label.toLowerCase()}`);
+    redoBinderSteps: (n) => {
+      let last: BinderEntry | undefined;
+      let done = 0;
+      for (; done < n; done++) {
+        const { binderUndo, binderRedo, nodes, selectedId } = get();
+        const e = binderRedo[binderRedo.length - 1];
+        if (!e) break;
+        last = e;
+        set({ binderRedo: binderRedo.slice(0, -1), binderUndo: [...binderUndo, { ...e, nodes, selectedId }], selectedId: pickSelection(e.nodes, selectedId, e.selectedId), multi: [] });
+        set({ nodes: e.nodes });
+      }
+      if (!last) return;
+      void saveBinder(get().nodes, null);
+      get().showToast(done === 1 ? `Redid ${last.label.toLowerCase()}` : `Redid ${done} changes`);
     },
     select: (id) => set({ selectedId: id, codexId: null, bookOutline: false, statsView: false, collectionId: null, multi: [] }),
     addNode: async (type, parentId) => {

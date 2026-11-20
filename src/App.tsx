@@ -32,6 +32,7 @@ import { ExtractDialog } from "./ExtractDialog";
 import { SettingsDialog, openSettings } from "./Settings";
 import { ContextMenu, useSuppressBrowserMenu } from "./ContextMenu";
 import { Icon, IconName, Ring } from "./icons";
+import { ActivityPanel } from "./ActivityPanel";
 import { FormatBar, HistoryButtons, SelectionMenu } from "./EditorChrome";
 import { TooltipLayer } from "./Tooltip";
 import { createEntryFromSelection } from "./selection";
@@ -249,6 +250,7 @@ function RightPanel() {
     ["reference", "Reference", "codex"],
     ["comments", "Comments", "comment"],
     ["snapshots", "Snapshots", "history"],
+    ["activity", "Activity", "activity"],
   ];
   const ai: [RightTab, string, IconName][] = hasKey
     ? [
@@ -275,6 +277,7 @@ function RightPanel() {
         {shown === "inspector" && <Inspector />}
         {shown === "reference" && <ReferencePane />}
         {shown === "snapshots" && <SnapshotsTab />}
+        {shown === "activity" && <ActivityPanel />}
         {shown === "comments" && <CommentsPanel />}
         {shown === "chat" && <ChatPanel />}
         {shown === "findings" && <FindingsPanel />}
@@ -665,6 +668,7 @@ function Workspace() {
       { id: "new-collection", label: "New smart collection", group: "Create", run: () => s.set({ collectionId: s.newCollection("smart"), leftTab: "collections", bookOutline: false, codexId: null }) },
       { id: "codex", label: "Codex", group: "Go to", run: () => s.set({ leftTab: "codex" }) },
       { id: "snap", label: "Snapshots", group: "Go to", run: () => s.set({ rightTab: "snapshots" }) },
+      { id: "activity", label: "Activity: things you can undo", group: "Go to", run: () => s.set({ rightTab: "activity" }) },
       { id: "stats", label: "Goals and stats", group: "Go to", run: () => s.set({ statsView: !s.statsView, codexId: null }) },
       { id: "settings", label: "Settings", hint: `${MOD},`, group: "Go to", run: () => openSettings() },
       ...(hasKey ? TOOLS.map((t) => ({ id: `ai-${t.id}`, label: t.label, detail: TOOL_HINTS[t.id], group: "Assist", run: () => openTool(t.id) })) : []),

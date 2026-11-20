@@ -15,7 +15,7 @@ const { invoke } = await import("@tauri-apps/api/core");
 const diane = emptyEntry("diane", "character", "Diane Marsh");
 
 beforeEach(() => {
-  useStore.setState({ dir: "/p", codex: [diane], codexId: "diane", toast: null });
+  useStore.setState({ dir: "/p", codex: [diane], codexId: "diane", toast: null, codexTrash: [] });
   vi.mocked(invoke).mockClear();
 });
 
@@ -34,5 +34,21 @@ describe("deleting a codex entry", () => {
   it("offers no undo for an entry it does not know", async () => {
     await useStore.getState().deleteEntry("nobody");
     expect(useStore.getState().toast).toBeNull();
+  });
+
+  it("keeps the deleted entry in the list and saves the list", async () => {
+    await useStore.getState().deleteEntry("diane");
+    expect(useStore.getState().codexTrash.map((t) => t.entry.id)).toEqual(["diane"]);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("write_history", expect.objectContaining({ dir: "/p", name: "codex" }));
+  });
+
+  it("restoring from the list puts it back and drops it from the list", async () => {
+    await useStore.getState().deleteEntry("diane");
+    vi.mocked(invoke).mockClear();
+    await useStore.getState().restoreDeletedEntry("diane");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("save_codex_entry", { dir: "/p", entry: diane, body: "Diane is proud." });
+    expect(useStore.getState().codexTrash).toEqual([]);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("clear_history", { dir: "/p", name: "codex" });
+    expect(useStore.getState().toast?.text).toBe("Restored “Diane Marsh”");
   });
 });
