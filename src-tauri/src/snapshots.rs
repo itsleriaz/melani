@@ -2,7 +2,7 @@
 //! Snapshots: full copies of scene text under snapshots/<id>/, as plain files.
 //!   snapshots/<id>/meta.json
 //!   snapshots/<id>/<scene-id>.md
-use crate::project::{atomic_write, check_id, new_id, read_scene, write_scene, ProjectError};
+use crate::project::{atomic_write, check_id, new_id, read_binder, read_scene, write_scene, BinderNode, ProjectError};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -49,6 +49,51 @@ pub fn create(dir: &Path, scene_ids: &[String], note: &str, label: &str, scope: 
     let meta = SnapshotMeta { id, created_at, note: note.into(), label: label.into(), scope: scope.into(), scene_ids: scene_ids.to_vec() };
     atomic_write(&sd.join("meta.json"), &serde_json::to_string_pretty(&meta).expect("serializable"))?;
     Ok(meta)
+}
+
+/// A save that removes this much of a scene is snapshotted first. Small scenes are left out: there is
+/// little to lose, and clearing a stub is routine.
+const GUARD_MIN_WORDS: usize = 30;
+/// Cutting a long scene to less than half is guarded too, but at most once in this long per scene.
+const GUARD_HALVING_MIN_WORDS: usize = 200;
+const GUARD_COOLDOWN_MS: u64 = 10 * 60 * 1000;
+const GUARD_NOTE: &str = "Automatic: before a save removed most of this scene's text";
+
+fn words(s: &str) -> usize {
+    s.split_whitespace().count()
+}
+
+/// Whether saving `new` over `old` removes enough text that the old text should be kept first.
+pub fn shrinks_sharply(old: &str, new: &str) -> bool {
+    let (o, n) = (words(old), words(new));
+    o >= GUARD_MIN_WORDS && (n == 0 || (o >= GUARD_HALVING_MIN_WORDS && n * 2 < o))
+}
+
+fn title_of(nodes: &[BinderNode], id: &str) -> Option<String> {
+    nodes.iter().find_map(|n| if n.id == id { Some(n.title.clone()) } else { title_of(&n.children, id) })
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Save a scene, but first snapshot the old text if this save would wipe out most of it. That is what an
+/// author does on purpose now and then, and also what a bug in the editor looks like, and the app cannot
+/// tell them apart. The snapshot shows up in the Snapshots tab as automatic. A failure to snapshot does
+/// not block the save: what the author typed is the truth.
+pub fn write_scene_guarded(dir: &Path, id: &str, content: &str) -> Result<()> {
+    check_id(id)?;
+    let old = read_scene(dir, id)?;
+    if shrinks_sharply(&old, content) {
+        let emptied = words(content) == 0;
+        // Emptying happens once per full scene, so it is always kept; halving is rate limited.
+        let recent = !emptied && list(dir).iter().any(|m| m.scope == "auto" && m.note == GUARD_NOTE && m.scene_ids.iter().any(|s| s == id) && now_ms().saturating_sub(m.created_at) < GUARD_COOLDOWN_MS);
+        if !recent {
+            let label = read_binder(dir).ok().and_then(|b| title_of(&b.nodes, id)).unwrap_or_else(|| "Scene".into());
+            let _ = create(dir, &[id.to_string()], GUARD_NOTE, &label, "auto");
+        }
+    }
+    write_scene(dir, id, content)
 }
 
 /// Newest first. Folders without a readable meta.json are ignored.
@@ -152,5 +197,65 @@ mod tests {
         assert!(list(d.path()).is_empty());
         assert!(delete(d.path(), "../x").is_err());
         assert!(create(d.path(), &ids(&["../x"]), "", "", "scene").is_err());
+    }
+
+    fn text(n: usize) -> String {
+        "word ".repeat(n)
+    }
+
+    #[test]
+    fn emptying_a_real_scene_keeps_the_old_text() {
+        let d = tempfile::tempdir().unwrap();
+        create_project(d.path(), "T").unwrap();
+        write_scene(d.path(), "s1", &text(120)).unwrap();
+        write_scene_guarded(d.path(), "s1", "").unwrap();
+        assert_eq!(read_scene(d.path(), "s1").unwrap(), "");
+        let snaps = list(d.path());
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].scope, "auto");
+        assert_eq!(read(d.path(), &snaps[0].id, "s1").unwrap(), text(120));
+        // Saving again over the now empty scene adds nothing.
+        write_scene_guarded(d.path(), "s1", "a bit").unwrap();
+        assert_eq!(list(d.path()).len(), 1);
+    }
+
+    #[test]
+    fn halving_a_long_scene_is_guarded_once_per_cooldown() {
+        let d = tempfile::tempdir().unwrap();
+        create_project(d.path(), "T").unwrap();
+        write_scene(d.path(), "s1", &text(500)).unwrap();
+        write_scene_guarded(d.path(), "s1", &text(200)).unwrap();
+        assert_eq!(list(d.path()).len(), 1);
+        write_scene(d.path(), "s1", &text(500)).unwrap();
+        write_scene_guarded(d.path(), "s1", &text(100)).unwrap();
+        assert_eq!(list(d.path()).len(), 1, "a second halving within the cooldown reuses the first snapshot");
+    }
+
+    #[test]
+    fn ordinary_edits_and_small_scenes_are_not_snapshotted() {
+        let d = tempfile::tempdir().unwrap();
+        create_project(d.path(), "T").unwrap();
+        write_scene(d.path(), "s1", &text(500)).unwrap();
+        write_scene_guarded(d.path(), "s1", &text(300)).unwrap(); // cut by 40 percent
+        write_scene(d.path(), "s2", &text(20)).unwrap();
+        write_scene_guarded(d.path(), "s2", "").unwrap(); // a stub
+        write_scene_guarded(d.path(), "s3", &text(50)).unwrap(); // a new scene
+        assert!(list(d.path()).is_empty());
+        assert!(!shrinks_sharply(&text(100), &text(60)));
+        assert!(shrinks_sharply(&text(100), "   \n "));
+    }
+
+    #[test]
+    fn the_snapshot_is_labelled_with_the_scene_title() {
+        use crate::project::{save_binder, Binder};
+        let d = tempfile::tempdir().unwrap();
+        create_project(d.path(), "T").unwrap();
+        let mut b: Binder = read_binder(d.path()).unwrap();
+        let id = b.nodes[0].children[0].id.clone();
+        b.nodes[0].children[0].title = "The Ferry".into();
+        save_binder(d.path(), &b).unwrap();
+        write_scene(d.path(), &id, &text(80)).unwrap();
+        write_scene_guarded(d.path(), &id, "").unwrap();
+        assert_eq!(list(d.path())[0].label, "The Ferry");
     }
 }

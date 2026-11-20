@@ -226,7 +226,7 @@ async fn read_scene(dir: String, id: String) -> Result<String, String> {
 }
 #[tauri::command]
 async fn write_scene(dir: String, id: String, content: String) -> Result<(), String> {
-    project::write_scene(Path::new(&dir), &id, &content).map_err(s)
+    snapshots::write_scene_guarded(Path::new(&dir), &id, &content).map_err(s)
 }
 #[tauri::command]
 async fn read_scene_meta(dir: String, id: String) -> Result<String, String> {
