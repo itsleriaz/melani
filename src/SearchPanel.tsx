@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "./icons";
 import { flushAll } from "./SceneEditor";
 import { SearchQuery, useStore } from "./store";
-import { BinderNode, findNode, findParent } from "./tree";
+import { scopeRoot, searchableIds, type SearchScope } from "./searchScope";
+import { findNode, findParent, type BinderNode } from "./tree";
 
 interface Hit {
   index: number;
@@ -17,20 +18,6 @@ interface Group {
   kind: "scene" | "codex";
   count: number;
   hits: Hit[];
-}
-
-/** Scenes and notes in binder order, outside the trash, filtered by scope. */
-function searchableIds(nodes: BinderNode[], q: SearchQuery): string[] {
-  const out: string[] = [];
-  const walk = (list: BinderNode[]) => {
-    for (const n of list) {
-      if (n.type === "trash") continue;
-      if ((n.type === "scene" && q.manuscript) || (n.type === "note" && q.notes)) out.push(n.id);
-      walk(n.children);
-    }
-  };
-  walk(nodes);
-  return out;
 }
 
 /** The heading a result sits under: its chapter (or part), "Notes", or "Codex". */
@@ -59,7 +46,14 @@ export function SearchPanel() {
   const seq = useRef(0);
 
   const patch = (p: Partial<SearchQuery>) => set({ search: { ...query, ...p } });
-  const ids = useMemo(() => searchableIds(nodes, query), [nodes, query]);
+  const selectedId = useStore((s) => s.selectedId);
+  const scope = query.scope;
+  const root = scopeRoot(nodes, selectedId, scope);
+  const ids = useMemo(() => searchableIds(nodes, query, scope, selectedId), [nodes, query, scope, selectedId]);
+  // Only the ids matter to the search, so a new array with the same scenes must not search again.
+  const idsKey = ids.join(",");
+  const searchCodex = query.codex && scope === "project";
+  const what = scope === "project" ? "the project" : scope === "chapter" ? "this chapter" : "this scene";
   const options = { caseSensitive: query.caseSensitive, wholeWord: query.wholeWord };
 
   useEffect(() => {
@@ -71,11 +65,11 @@ export function SearchPanel() {
     const n = ++seq.current;
     if (!query.q) return setGroups(null);
     const t = window.setTimeout(async () => {
-      const r = await invoke<Group[]>("search_groups", { dir, query: query.q, options, sceneIds: ids, codex: query.codex }).catch(() => []);
+      const r = await invoke<Group[]>("search_groups", { dir, query: query.q, options, sceneIds: ids, codex: searchCodex }).catch(() => []);
       if (n === seq.current) setGroups(r);
     }, 160);
     return () => window.clearTimeout(t);
-  }, [dir, query.q, query.caseSensitive, query.wholeWord, query.codex, ids, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dir, query.q, query.caseSensitive, query.wholeWord, searchCodex, idsKey, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const flat = useMemo(() => (groups ?? []).flatMap((g) => g.hits.map((h) => ({ g, h, key: `${g.id}:${h.index}` }))), [groups]);
   const total = (groups ?? []).reduce((a, g) => a + g.count, 0);
@@ -98,7 +92,7 @@ export function SearchPanel() {
     const sceneGroups = (groups ?? []).filter((g) => g.kind === "scene");
     const n = sceneGroups.reduce((a, g) => a + g.count, 0);
     if (!n) return;
-    const where = sceneGroups.length === 1 ? "one scene" : `${sceneGroups.length} scenes`;
+    const where = sceneGroups.length === 1 ? "one scene" : `${sceneGroups.length} scenes${scope === "chapter" && root ? ` in “${root.title}”` : ""}`;
     if (!window.confirm(`Replace ${n} match${n === 1 ? "" : "es"} of “${query.q}” in ${where} with “${replacement}”? A snapshot of those scenes is taken first, so you can undo it.`)) return;
     try {
       await flushAll();
@@ -138,8 +132,8 @@ export function SearchPanel() {
             <Icon name="search" size={14} />
             <input
               ref={input}
-              aria-label="Search the project"
-              placeholder="Search the project"
+              aria-label={`Search ${what}`}
+              placeholder={`Search ${what}`}
               value={query.q}
               onChange={(e) => patch({ q: e.target.value })}
               onKeyDown={(e) => {
@@ -161,18 +155,33 @@ export function SearchPanel() {
               <Icon name="replace" size={14} />
               <input aria-label="Replace with" placeholder="Replace with" value={replacement} onChange={(e) => setReplacement(e.target.value)} />
             </div>
-            <button className="btn" disabled={!groups?.some((g) => g.kind === "scene")} onClick={() => void replaceAll()} data-tip="Replaces in scenes and notes, not in the codex">
+            <button className="btn" disabled={!groups?.some((g) => g.kind === "scene")} onClick={() => void replaceAll()} data-tip="Replaces in scenes and notes, not the codex. Takes a snapshot first.">
               Replace all
             </button>
           </div>
         )}
-        <div className="search-row indent chips-row" role="group" aria-label="Search in">
-          {(["manuscript", "notes", "codex"] as const).map((k) => (
-            <button key={k} className={`chip ${query[k] ? "on" : ""}`} aria-pressed={query[k]} onClick={() => patch({ [k]: !query[k] })}>
-              {k === "manuscript" ? "Manuscript" : k === "notes" ? "Notes" : "Codex"}
+        <div className="search-row indent chips-row" role="group" aria-label="Where to search">
+          {(["project", "chapter", "scene"] as const).map((k: SearchScope) => (
+            <button
+              key={k}
+              className={`chip ${scope === k ? "on" : ""}`}
+              aria-pressed={scope === k}
+              data-tip={k === "project" ? "Everything in the project" : k === "chapter" ? (scopeRoot(nodes, selectedId, "chapter")?.title ?? "The chapter you are in") : (scopeRoot(nodes, selectedId, "scene")?.title ?? "The scene you are in")}
+              onClick={() => patch({ scope: k })}
+            >
+              {k === "project" ? "Project" : k === "chapter" ? "Chapter" : "Scene"}
             </button>
           ))}
         </div>
+        {scope !== "scene" && (
+          <div className="search-row indent chips-row" role="group" aria-label="Search in">
+            {(scope === "project" ? (["manuscript", "notes", "codex"] as const) : (["manuscript", "notes"] as const)).map((k) => (
+              <button key={k} className={`chip ${query[k] ? "on" : ""}`} aria-pressed={query[k]} onClick={() => patch({ [k]: !query[k] })}>
+                {k === "manuscript" ? "Manuscript" : k === "notes" ? "Notes" : "Codex"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {msg && (
@@ -211,7 +220,8 @@ export function SearchPanel() {
       )}
 
       <div className="search-results">
-        {!query.q && <div className="empty-state small">Search scenes, notes and the codex. Enter jumps to the next result, Shift+Enter to the previous one.</div>}
+        {scope !== "project" && !root && <div className="empty-state small">{scope === "scene" ? "Select a scene to search in it." : "Select a scene or chapter to search in its chapter."}</div>}
+        {!query.q && (scope === "project" || root) && <div className="empty-state small">{scope === "project" ? "Search scenes, notes and the codex." : `Search ${what}${root ? `: ${root.title}` : ""}.`} Enter jumps to the next result, Shift+Enter to the previous one.</div>}
         {sections.map((sec, si) => (
           <section key={si}>
             <div className={`section-label ${sec.title === "Codex" ? "accent" : ""}`}>{sec.title}</div>

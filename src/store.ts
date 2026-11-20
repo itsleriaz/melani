@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CodexEntry, emptyEntry } from "./codexTypes";
 import { emptyStats, Goals, parseStats, recordTotal, Stats } from "./stats";
 import { Collection, defaultRule } from "./collectionRules";
+import type { SearchScope } from "./searchScope";
 import { BinderEntry, parseBinderHistory, pickSelection, pushEntry, serializeBinderHistory } from "./binderHistory";
 import { addChild, BinderNode, canContain, findNode, findParent, leaves, mapNodes, moveNode, moveNodes, orderedIds, topLevelIds, newNode, NodeType, removeNode, updateNode, DropPos } from "./tree";
 
@@ -49,6 +50,8 @@ export interface SearchQuery {
   manuscript: boolean;
   codex: boolean;
   notes: boolean;
+  /** The whole project, or the chapter or scene that is selected. */
+  scope: SearchScope;
 }
 
 /** Ask the editor for a scene to select the n-th match of a search once it has loaded. */
@@ -319,7 +322,7 @@ export const useStore = create<State>((set, get) => {
     rightOpen: load("rightOpen", true),
     leftWidth: load("leftWidth", 272),
     rightWidth: load("rightWidth", 312),
-    search: { q: "", caseSensitive: false, wholeWord: false, manuscript: true, codex: true, notes: true },
+    search: { q: "", caseSensitive: false, wholeWord: false, manuscript: true, codex: true, notes: true, scope: "project" },
     searchFocus: 0,
     findOpen: false,
     findReplace: false,
