@@ -163,7 +163,8 @@ export function SceneEditor({ id }: { id: string }) {
   const saveNow = useCallback(async () => {
     window.clearTimeout(timer.current);
     const ed = editorRef.current;
-    if (!ed || ed.isDestroyed || !dirty.current) return;
+    // Never write before the scene's text has loaded: the editor is still empty and would wipe the file.
+    if (!ed || ed.isDestroyed || !dirty.current || loading.current) return;
     dirty.current = false;
     try {
       const doc = ed.state.doc;
@@ -204,7 +205,7 @@ export function SceneEditor({ id }: { id: string }) {
       journalTimer.current = window.setTimeout(() => {
         journalTimer.current = undefined;
         const ed = editorRef.current;
-        if (!ed || ed.isDestroyed || !dirty.current) return;
+        if (!ed || ed.isDestroyed || !dirty.current || loading.current) return;
         const text = sceneMarkdown(ed);
         const at = Date.now();
         journal(() => invoke("write_recovery", { dir, id, text, at }));
@@ -340,7 +341,8 @@ export function SceneEditor({ id }: { id: string }) {
   // Comments changed elsewhere (deleted in the panel, or a new feedback run): redraw and save.
   useEffect(() => {
     const ed = editorRef.current;
-    if (!ed || ed.isDestroyed || comments === undefined) return;
+    // Comments are applied by reload() once the text is in; marking the scene dirty before that saves an empty editor.
+    if (!ed || ed.isDestroyed || comments === undefined || loading.current) return;
     const json = JSON.stringify(comments);
     if (json === lastComments.current) return;
     lastComments.current = json;
