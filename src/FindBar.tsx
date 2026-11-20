@@ -1,16 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Ctrl+F: find in the text on screen (one scene, or every scene of a chapter shown as text).
-// The project-wide search lives in the left panel.
+// Ctrl+F: find and replace in the text on screen (one scene, or every scene of a chapter shown as text).
+// Replacing goes through the editors, so Cmd+Z undoes it. The project-wide search lives in the left panel.
 import { useEffect, useRef, useState } from "react";
-import { allHandles, getActiveEditor, onActiveChange } from "./editorRegistry";
+import { closeHistory } from "@tiptap/pm/history";
+import { allHandles, getActiveEditor, onActiveChange, type EditorHandle } from "./editorRegistry";
 import { Icon } from "./icons";
-import { docMatches, FIND_META } from "./search";
+import { MOD } from "./platform";
+import { docMatches, findAll, FIND_META, replaceMatches } from "./search";
 import { useStore } from "./store";
+
+/** The editors on screen, top to bottom. */
+function sortedHandles(): EditorHandle[] {
+  return allHandles()
+    .filter((h) => !h.editor.isDestroyed)
+    .sort((a, b) => (a.editor.view.dom.compareDocumentPosition(b.editor.view.dom) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+}
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 export function FindBar() {
   const focusSeq = useStore((s) => s.findFocus);
   const set = useStore((s) => s.set);
   const input = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replacement, setReplacement] = useState("");
+  /** What the last replace did, shown where the match count is. */
+  const [note, setNote] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [caseSensitive, setCase] = useState(false);
   const [wholeWord, setWhole] = useState(false);
@@ -37,6 +53,12 @@ export function FindBar() {
 
   // Opening (or pressing Ctrl+F again) focuses the field, seeded with the selected text.
   useEffect(() => {
+    // "Replace in this text" from the command palette opens the replace row and starts there.
+    const wantsReplace = useStore.getState().findReplace;
+    if (wantsReplace) {
+      useStore.setState({ findReplace: false });
+      setReplaceOpen(true);
+    }
     if (document.activeElement !== input.current) {
       const ed = getActiveEditor();
       const sel = ed && !ed.state.selection.empty ? ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to, " ") : "";
@@ -46,8 +68,12 @@ export function FindBar() {
         scroll.current = true;
       }
     }
-    input.current?.focus();
-    input.current?.select();
+    // The replace field is not there until the next render.
+    window.setTimeout(() => {
+      const el = wantsReplace ? replaceInput.current : input.current;
+      el?.focus();
+      el?.select();
+    }, 0);
   }, [focusSeq]);
 
   // Re-run when editors mount or unmount (switching scene) and when the text changes.
@@ -63,9 +89,7 @@ export function FindBar() {
   }, [tick]);
 
   useEffect(() => {
-    const hs = allHandles()
-      .filter((h) => !h.editor.isDestroyed)
-      .sort((a, b) => (a.editor.view.dom.compareDocumentPosition(b.editor.view.dom) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+    const hs = sortedHandles();
     const opts = { caseSensitive, wholeWord };
     const per = hs.map((h) => (q ? docMatches(h.editor.state.doc, q, opts).length : 0));
     const n = per.reduce((a, b) => a + b, 0);
@@ -105,12 +129,61 @@ export function FindBar() {
   const retype = (v: string) => {
     setQ(v);
     setPos(0);
+    setNote(null);
     scroll.current = true;
   };
   const idx = total ? Math.min(pos, total - 1) : -1;
+  const opts = { caseSensitive, wholeWord };
+
+  /** Replace the highlighted match. The next one slides into its place, so it becomes the current one. */
+  const replaceCurrent = () => {
+    if (!q || idx < 0) return;
+    let before = 0;
+    for (const h of sortedHandles()) {
+      const n = docMatches(h.editor.state.doc, q, opts).length;
+      if (idx >= before + n) {
+        before += n;
+        continue;
+      }
+      if (!h.editor.isEditable) return setNote("Wait for the AI to finish writing here.");
+      const r = replaceMatches(h.editor.state, q, opts, replacement, idx - before);
+      if (!r) return;
+      if (!r.count) return (setNote("That match is inside an AI suggestion. Accept or reject it first."), step(1));
+      h.editor.view.dispatch(closeHistory(r.tr));
+      // A replacement that contains the query would be found again: move past it.
+      setPos(idx + findAll(replacement, q, opts).length);
+      scroll.current = true;
+      return setNote(null);
+    }
+  };
+
+  /** Replace every match on screen: one undo step in each scene. */
+  const replaceAll = () => {
+    if (!q || !total) return;
+    let count = 0;
+    let skipped = 0;
+    let locked = 0;
+    for (const h of sortedHandles()) {
+      if (!h.editor.isEditable) {
+        if (docMatches(h.editor.state.doc, q, opts).length) locked++;
+        continue;
+      }
+      const r = replaceMatches(h.editor.state, q, opts, replacement);
+      if (!r) continue;
+      count += r.count;
+      skipped += r.skipped;
+      if (r.count) h.editor.view.dispatch(closeHistory(r.tr));
+    }
+    const extra = [skipped ? `${plural(skipped, "match")} inside AI suggestions left alone` : "", locked ? `${plural(locked, "scene")} locked while the AI writes` : ""].filter(Boolean);
+    setNote(`Replaced ${count}${extra.length ? `. ${extra.join("; ")}` : ""}`);
+    setPos(0);
+  };
   return (
-    <>
-      <div className="find-bar" role="search" aria-label="Find in this text" style={corner}>
+    <div className="find-bar" role="search" aria-label={replaceOpen ? "Find and replace in this text" : "Find in this text"} style={corner}>
+      <div className="find-row">
+        <button className="icon-btn small find-expand" aria-label={replaceOpen ? "Hide replace" : "Show replace"} aria-expanded={replaceOpen} data-tip={replaceOpen ? "Hide replace" : "Replace"} onClick={() => setReplaceOpen(!replaceOpen)}>
+          <Icon name={replaceOpen ? "chevronDown" : "chevronRight"} size={14} />
+        </button>
         <div className="search-field">
           <Icon name="search" size={15} />
           <input
@@ -144,6 +217,36 @@ export function FindBar() {
           <Icon name="close" size={14} />
         </button>
       </div>
-    </>
+      {replaceOpen && (
+        <div className="find-row">
+          <span className="find-expand" aria-hidden="true" />
+          <div className="search-field">
+            <Icon name="pen" size={15} />
+            <input
+              ref={replaceInput}
+              value={replacement}
+              placeholder="Replace with"
+              aria-label="Replace with"
+              onChange={(e) => (setReplacement(e.target.value), setNote(null))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.preventDefault(), e.metaKey || e.ctrlKey || e.altKey ? replaceAll() : replaceCurrent());
+                else if (e.key === "Escape") (e.preventDefault(), close());
+              }}
+            />
+          </div>
+          <button className="find-act" data-tip="Replace this match (Enter)" disabled={!total} onClick={replaceCurrent}>
+            Replace
+          </button>
+          <button className="find-act" data-tip="Replace every match on screen" data-tip-kbd={`${MOD}↵`} disabled={!total} onClick={replaceAll}>
+            All
+          </button>
+        </div>
+      )}
+      {note && (
+        <div className="find-note muted" role="status">
+          {note}
+        </div>
+      )}
+    </div>
   );
 }

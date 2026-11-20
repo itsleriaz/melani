@@ -5,7 +5,9 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Node as PMNode } from "@tiptap/pm/model";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { collectBlocks } from "./Mentions";
+import { ORIGINAL, SUGGESTION } from "./suggestions";
 
 export interface MatchOptions {
   caseSensitive: boolean;
@@ -43,6 +45,23 @@ export function docMatches(doc: PMNode, query: string, opts: MatchOptions): { fr
   const out: { from: number; to: number }[] = [];
   for (const b of collectBlocks(doc)) for (const [s, e] of findAll(b.text, query, opts)) out.push({ from: b.pos + s, to: b.pos + e });
   return out;
+}
+
+/**
+ * One transaction that replaces matches with `replacement`: only the match at `index` when given, else all
+ * of them. Matches inside a pending AI suggestion are left alone (those are accepted or rejected, not edited)
+ * and counted as `skipped`. Null when there is nothing to replace.
+ */
+export function replaceMatches(state: EditorState, query: string, opts: MatchOptions, replacement: string, index?: number): { tr: Transaction; count: number; skipped: number } | null {
+  const all = docMatches(state.doc, query, opts);
+  const picked = index === undefined ? all : all[index] ? [all[index]] : [];
+  const inSuggestion = (m: { from: number; to: number }) => [ORIGINAL, SUGGESTION].some((name) => state.schema.marks[name] && state.doc.rangeHasMark(m.from, m.to, state.schema.marks[name]));
+  const todo = picked.filter((m) => !inSuggestion(m));
+  if (!todo.length) return picked.length ? { tr: state.tr, count: 0, skipped: picked.length } : null;
+  const tr = state.tr;
+  // Back to front, so earlier positions are not shifted by later edits.
+  for (let i = todo.length - 1; i >= 0; i--) tr.insertText(replacement, todo[i].from, todo[i].to);
+  return { tr, count: todo.length, skipped: picked.length - todo.length };
 }
 
 export interface HighlightState {

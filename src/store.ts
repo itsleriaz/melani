@@ -118,6 +118,8 @@ interface State {
   openSearch: (q?: string) => void;
   /** The find bar (Ctrl+F) for the text on screen. The counter re-focuses it when pressed again. */
   findOpen: boolean;
+  /** Open the find bar with its replace row showing. */
+  findReplace: boolean;
   findFocus: number;
 
   codex: CodexEntry[];
@@ -320,6 +322,7 @@ export const useStore = create<State>((set, get) => {
     search: { q: "", caseSensitive: false, wholeWord: false, manuscript: true, codex: true, notes: true },
     searchFocus: 0,
     findOpen: false,
+    findReplace: false,
     findFocus: 0,
     jump: null,
     openSearch: (q) => {

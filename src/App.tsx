@@ -642,6 +642,7 @@ function Workspace() {
   const commands = useMemo<Command[]>(
     () => [
       { id: "find", label: "Find in this text", hint: `${MOD}F`, group: "Go to", run: () => s.set({ findOpen: true, findFocus: s.findFocus + 1 }) },
+      { id: "replace", label: "Replace in this text", group: "Go to", run: () => s.set({ findOpen: true, findReplace: true, findFocus: s.findFocus + 1 }) },
       { id: "search", label: "Search the project", hint: `${MOD}${SHIFT}F`, group: "Go to", run: () => s.openSearch() },
       { id: "binder", label: "Binder", group: "Go to", run: () => s.set({ leftTab: "binder" }) },
       { id: "collections", label: "Collections", group: "Go to", run: () => s.set({ leftTab: "collections" }) },
