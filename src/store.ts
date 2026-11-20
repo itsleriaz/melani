@@ -5,7 +5,7 @@ import { CodexEntry, emptyEntry } from "./codexTypes";
 import { emptyStats, Goals, parseStats, recordTotal, Stats } from "./stats";
 import { Collection, defaultRule } from "./collectionRules";
 import type { SearchScope } from "./searchScope";
-import { CodexTrashItem, MAX_CODEX_TRASH, parseCodexTrash, serializeCodexTrash } from "./activity";
+import { CodexTrashItem, CollectionEntry, MAX_CODEX_TRASH, parseCodexTrash, serializeCodexTrash } from "./activity";
 import { BinderEntry, parseBinderHistory, pickSelection, pushEntry, serializeBinderHistory } from "./binderHistory";
 import { addChild, BinderNode, canContain, findNode, findParent, leaves, mapNodes, moveNode, moveNodes, orderedIds, topLevelIds, newNode, NodeType, removeNode, updateNode, DropPos } from "./tree";
 
@@ -187,6 +187,11 @@ interface State {
   /** Undo or redo several binder changes at once (the Activity panel's "to here"). */
   undoBinderSteps: (n: number) => void;
   redoBinderSteps: (n: number) => void;
+  /** Undo and redo for collection edits (kept for this session). */
+  collectionsUndo: CollectionEntry[];
+  collectionsRedo: CollectionEntry[];
+  undoCollections: (n: number) => void;
+  redoCollections: (n: number) => void;
   /** Codex entries deleted recently, newest first, kept with their text so they can be put back. */
   codexTrash: CodexTrashItem[];
   restoreDeletedEntry: (id: string) => Promise<void>;
@@ -269,8 +274,10 @@ export const useStore = create<State>((set, get) => {
       set({ error: String(e) });
     }
   };
-  const saveCollections = (collections: Collection[]) => {
+  /** Write the collections. `label` names the edit for undo; null for a change that must not be undoable. */
+  const saveCollections = (collections: Collection[], label: string | null = "Edit collection") => {
     const dir = get().dir;
+    if (label) set({ collectionsUndo: pushEntry(get().collectionsUndo, { label, collections: get().collections, at: Date.now() }), collectionsRedo: [] });
     set({ collections });
     if (dir) void invoke("write_collections", { dir, content: JSON.stringify(collections, null, 2) }).catch((e) => set({ error: String(e) }));
   };
@@ -278,7 +285,7 @@ export const useStore = create<State>((set, get) => {
     const recent = [dir, ...get().recent.filter((r) => r !== dir)].slice(0, 8);
     persist("recent", recent);
     const first = o.binder.nodes.flatMap(leaves)[0];
-    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], codexTrash: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
+    set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], codexTrash: [], collectionsUndo: [], collectionsRedo: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
     void invoke<string>("read_history", { dir, name: "binder" })
       .then((raw) => {
         const h = raw ? parseBinderHistory(raw, get().nodes) : null;
@@ -316,6 +323,8 @@ export const useStore = create<State>((set, get) => {
     historyScope: "text",
     toast: null,
     codexTrash: [],
+    collectionsUndo: [],
+    collectionsRedo: [],
     showToast: (text, action) => {
       const id = Date.now() + Math.random();
       set({ toast: { id, text, action } });
@@ -382,15 +391,15 @@ export const useStore = create<State>((set, get) => {
       const id = crypto.randomUUID().slice(0, 8);
       const n = get().collections.length + 1;
       const c: Collection = { id, name: kind === "smart" ? `Smart collection ${n}` : `Collection ${n}`, kind, ids: [], rules: kind === "smart" ? [defaultRule("status")] : [], match: "all", ...init };
-      saveCollections([...get().collections, c]);
+      saveCollections([...get().collections, c], c.kind === "smart" ? "New smart collection" : "New collection");
       return id;
     },
     patchCollection: (id, p) => saveCollections(get().collections.map((c) => (c.id === id ? { ...c, ...p } : c))),
     deleteCollection: (id) => {
-      saveCollections(get().collections.filter((c) => c.id !== id));
+      saveCollections(get().collections.filter((c) => c.id !== id), "Delete collection");
       if (get().collectionId === id) set({ collectionId: null });
     },
-    addToCollection: (id, sceneIds) => saveCollections(get().collections.map((c) => (c.id === id ? { ...c, ids: [...c.ids, ...sceneIds.filter((s) => !c.ids.includes(s))] } : c))),
+    addToCollection: (id, sceneIds) => saveCollections(get().collections.map((c) => (c.id === id ? { ...c, ids: [...c.ids, ...sceneIds.filter((s) => !c.ids.includes(s))] } : c)), "Add to collection"),
     outlineCols: load("outlineCols", ["synopsis", "status", "pov", "words"]),
     trackTotal: (total) => {
       const next = recordTotal(get().stats, total);
@@ -482,7 +491,33 @@ export const useStore = create<State>((set, get) => {
       const dir = get().dir;
       await flushBinderHistory();
       if (dir) await invoke("close_project", { dir }).catch(() => {});
-      set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], codexTrash: [], selectedId: null, counts: {}, recovery: [] });
+      set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], codexTrash: [], collectionsUndo: [], collectionsRedo: [], selectedId: null, counts: {}, recovery: [] });
+    },
+    undoCollections: (n) => {
+      let last: CollectionEntry | undefined;
+      let done = 0;
+      for (; done < n; done++) {
+        const { collectionsUndo: u, collectionsRedo: r, collections } = get();
+        const e = u[u.length - 1];
+        if (!e) break;
+        last = e;
+        set({ collectionsUndo: u.slice(0, -1), collectionsRedo: [...r, { ...e, collections }] });
+        saveCollections(e.collections, null);
+      }
+      if (last) get().showToast(done === 1 ? `Undid ${last.label.toLowerCase()}` : `Undid ${done} changes`);
+    },
+    redoCollections: (n) => {
+      let last: CollectionEntry | undefined;
+      let done = 0;
+      for (; done < n; done++) {
+        const { collectionsUndo: u, collectionsRedo: r, collections } = get();
+        const e = r[r.length - 1];
+        if (!e) break;
+        last = e;
+        set({ collectionsRedo: r.slice(0, -1), collectionsUndo: [...u, { ...e, collections }] });
+        saveCollections(e.collections, null);
+      }
+      if (last) get().showToast(done === 1 ? `Redid ${last.label.toLowerCase()}` : `Redid ${done} changes`);
     },
     undoBinder: () => get().undoBinderSteps(1),
     redoBinder: () => get().redoBinderSteps(1),
@@ -639,7 +674,8 @@ export const useStore = create<State>((set, get) => {
         set({ binderUndo: [], binderRedo: [] });
         await saveBinder(nodes, null);
         const cols = get().collections;
-        if (cols.some((c) => c.ids.some((id) => gone.has(id)))) saveCollections(cols.map((c) => ({ ...c, ids: c.ids.filter((id) => !gone.has(id)) })));
+        set({ collectionsUndo: [], collectionsRedo: [] }); // earlier states still list the deleted scenes
+        if (cols.some((c) => c.ids.some((id) => gone.has(id)))) saveCollections(cols.map((c) => ({ ...c, ids: c.ids.filter((id) => !gone.has(id)) })), null);
         await invoke("delete_scenes", { dir, ids: files });
         void get().refreshCounts();
       } catch (e) {

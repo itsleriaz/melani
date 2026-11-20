@@ -15,7 +15,7 @@ export const MAX_ENTRIES = 100;
 export const COALESCE_MS = 1500;
 
 /** Add an entry on top of the stack, merging it into the top one when it is a quick repeat. */
-export function pushEntry(stack: BinderEntry[], entry: BinderEntry): BinderEntry[] {
+export function pushEntry<T extends { label: string; at: number }>(stack: T[], entry: T): T[] {
   const top = stack[stack.length - 1];
   if (top && top.label === entry.label && entry.at - top.at < COALESCE_MS) return [...stack.slice(0, -1), { ...top, at: entry.at }];
   return [...stack, entry].slice(-MAX_ENTRIES);

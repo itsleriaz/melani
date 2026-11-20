@@ -48,6 +48,25 @@ describe("activity list", () => {
   });
 });
 
+describe("collection history in the list", () => {
+  const ce = (label: string, at: number) => ({ label, collections: [], at });
+
+  it("is listed like the binder's, with its own wording", () => {
+    const items = buildActivity({ binderUndo: [], binderRedo: [], codexTrash: [], snapshots: [], collectionsUndo: [ce("New collection", 1), ce("Delete collection", 2)], collectionsRedo: [ce("Edit collection", 3)] });
+    const byTitle = Object.fromEntries(items.map((i) => [i.title, i]));
+    expect(byTitle["New collection"].action).toEqual({ kind: "collections-undo", steps: 2 });
+    expect(byTitle["New collection"].detail).toBe("Undoing this also undoes 1 later collection change");
+    expect(byTitle["Delete collection"].action).toEqual({ kind: "collections-undo", steps: 1 });
+    expect(byTitle["Edit collection"].action).toEqual({ kind: "collections-redo", steps: 1 });
+    expect(byTitle["Edit collection"].state).toBe("undone");
+  });
+
+  it("keeps binder and collection steps apart", () => {
+    const items = buildActivity({ binderUndo: [be("Move", 5)], binderRedo: [], codexTrash: [], snapshots: [], collectionsUndo: [ce("New collection", 6)] });
+    expect(items.map((i) => i.action.kind)).toEqual(["collections-undo", "binder-undo"]);
+  });
+});
+
 describe("time ago", () => {
   const now = 1_000_000_000_000;
   it("reads naturally", () => {

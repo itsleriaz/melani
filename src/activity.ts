@@ -4,6 +4,14 @@
 // snapshots). Typing is not listed: that is undone in the text itself.
 import type { BinderEntry } from "./binderHistory";
 import type { CodexEntry } from "./codexTypes";
+import type { Collection } from "./collectionRules";
+
+/** The collections as they were before an edit, for undo. */
+export interface CollectionEntry {
+  label: string;
+  collections: Collection[];
+  at: number;
+}
 
 export interface CodexTrashItem {
   entry: CodexEntry;
@@ -24,6 +32,8 @@ export interface SnapshotInfo {
 export type ActivityAction =
   | { kind: "binder-undo"; steps: number }
   | { kind: "binder-redo"; steps: number }
+  | { kind: "collections-undo"; steps: number }
+  | { kind: "collections-redo"; steps: number }
   | { kind: "codex-restore"; id: string }
   | { kind: "snapshot-review"; snapshotId: string; sceneId: string };
 
@@ -49,34 +59,21 @@ function snapshotTitle(note: string): string {
   return capital(n || "Automatic backup");
 }
 
-export function buildActivity(o: { binderUndo: BinderEntry[]; binderRedo: BinderEntry[]; codexTrash: CodexTrashItem[]; snapshots: SnapshotInfo[] }): ActivityItem[] {
+export function buildActivity(o: { binderUndo: BinderEntry[]; binderRedo: BinderEntry[]; codexTrash: CodexTrashItem[]; snapshots: SnapshotInfo[]; collectionsUndo?: CollectionEntry[]; collectionsRedo?: CollectionEntry[] }): ActivityItem[] {
   const items: ActivityItem[] = [];
-  const nu = o.binderUndo.length;
-  o.binderUndo.forEach((e, i) => {
-    const steps = nu - i; // this one and everything after it
-    items.push({
-      key: `b-undo-${i}-${e.at}`,
-      at: e.at,
-      title: e.label,
-      detail: steps > 1 ? `Undoing this also undoes ${steps - 1} later binder change${steps === 2 ? "" : "s"}` : undefined,
-      state: "done",
-      actionLabel: steps > 1 ? "Undo to here" : "Undo",
-      action: { kind: "binder-undo", steps },
+  // Collections have their own linear history, listed the same way as the binder's.
+  const stackItems = (undo: { label: string; at: number }[], redo: { label: string; at: number }[], prefix: string, what: string, kinds: { undo: "binder-undo" | "collections-undo"; redo: "binder-redo" | "collections-redo" }) => {
+    undo.forEach((e, i) => {
+      const steps = undo.length - i;
+      items.push({ key: `${prefix}-undo-${i}-${e.at}`, at: e.at, title: e.label, detail: steps > 1 ? `Undoing this also undoes ${steps - 1} later ${what} change${steps === 2 ? "" : "s"}` : undefined, state: "done", actionLabel: steps > 1 ? "Undo to here" : "Undo", action: { kind: kinds.undo, steps } });
     });
-  });
-  const nr = o.binderRedo.length;
-  o.binderRedo.forEach((e, j) => {
-    const steps = nr - j; // the last one is the next to redo
-    items.push({
-      key: `b-redo-${j}-${e.at}`,
-      at: e.at,
-      title: e.label,
-      detail: "Undone",
-      state: "undone",
-      actionLabel: steps > 1 ? "Redo to here" : "Redo",
-      action: { kind: "binder-redo", steps },
+    redo.forEach((e, j) => {
+      const steps = redo.length - j; // the last one is the next to redo
+      items.push({ key: `${prefix}-redo-${j}-${e.at}`, at: e.at, title: e.label, detail: "Undone", state: "undone", actionLabel: steps > 1 ? "Redo to here" : "Redo", action: { kind: kinds.redo, steps } });
     });
-  });
+  };
+  stackItems(o.binderUndo, o.binderRedo, "b", "binder", { undo: "binder-undo", redo: "binder-redo" });
+  stackItems(o.collectionsUndo ?? [], o.collectionsRedo ?? [], "col", "collection", { undo: "collections-undo", redo: "collections-redo" });
   for (const c of o.codexTrash) {
     items.push({ key: `codex-${c.entry.id}-${c.at}`, at: c.at, title: `Deleted “${c.entry.name}”`, detail: "Codex entry", state: "done", actionLabel: "Restore", action: { kind: "codex-restore", id: c.entry.id } });
   }

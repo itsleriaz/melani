@@ -15,6 +15,8 @@ export function ActivityPanel() {
   const binderUndo = useStore((s) => s.binderUndo);
   const binderRedo = useStore((s) => s.binderRedo);
   const codexTrash = useStore((s) => s.codexTrash);
+  const collectionsUndo = useStore((s) => s.collectionsUndo);
+  const collectionsRedo = useStore((s) => s.collectionsRedo);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [busy, setBusy] = useState(false);
@@ -40,7 +42,7 @@ export function ActivityPanel() {
     };
   }, [dir]);
 
-  const items = useMemo(() => buildActivity({ binderUndo, binderRedo, codexTrash, snapshots }), [binderUndo, binderRedo, codexTrash, snapshots]);
+  const items = useMemo(() => buildActivity({ binderUndo, binderRedo, codexTrash, snapshots, collectionsUndo, collectionsRedo }), [binderUndo, binderRedo, codexTrash, snapshots, collectionsUndo, collectionsRedo]);
 
   const backUpNow = async () => {
     setBusy(true);
@@ -93,6 +95,8 @@ export function ActivityPanel() {
     const s = useStore.getState();
     if (a.kind === "binder-undo") s.undoBinderSteps(a.steps);
     else if (a.kind === "binder-redo") s.redoBinderSteps(a.steps);
+    else if (a.kind === "collections-undo") s.undoCollections(a.steps);
+    else if (a.kind === "collections-redo") s.redoCollections(a.steps);
     else if (a.kind === "codex-restore") void s.restoreDeletedEntry(a.id);
     else s.set({ diff: { snapshotId: a.snapshotId, sceneId: a.sceneId } });
   };
