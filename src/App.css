@@ -1227,3 +1227,4 @@ svg[data-icon="collapseAll"] .i-bottom { --dy: 4px; animation: i-chev 0.25s ease
 .backups { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
 .backups-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .activity-act:disabled { opacity: 0.45; }
+.activity-acts { display: flex; align-items: center; gap: 4px; flex: none; }

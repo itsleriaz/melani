@@ -267,6 +267,10 @@ async fn list_backups(dir: String) -> Vec<backup::BackupInfo> {
     backup::list(Path::new(&dir))
 }
 #[tauri::command]
+async fn delete_backup(dir: String, name: String) -> Result<(), String> {
+    backup::delete(Path::new(&dir), &name).map_err(s)
+}
+#[tauri::command]
 async fn restore_backup_copy(dir: String, name: String) -> Result<String, String> {
     backup::restore_copy(Path::new(&dir), &name).map(|p| p.display().to_string()).map_err(s)
 }
@@ -349,6 +353,7 @@ pub fn run() {
             create_backup,
             list_backups,
             restore_backup_copy,
+            delete_backup,
             write_history,
             read_history,
             clear_history,

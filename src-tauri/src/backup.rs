@@ -154,6 +154,17 @@ fn prune(dir: &Path, keep: usize) {
     }
 }
 
+/// Delete one backup by name. Only names this module made are accepted, so nothing else can be reached.
+pub fn delete(dir: &Path, name: &str) -> Result<()> {
+    ms_from(name).ok_or_else(|| ProjectError::BadId(name.into()))?;
+    let p = backups_dir(dir).join(name);
+    match fs::remove_file(&p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(ProjectError::Io(p.display().to_string(), e)),
+    }
+}
+
 /// Days since 1970-01-01 to (year, month, day), proleptic Gregorian.
 fn civil(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
@@ -319,6 +330,20 @@ mod tests {
         assert_eq!(list(&dir).len(), 1);
         assert!(restore_copy(&dir, "../backup-10.zip").is_err());
         assert!(restore_copy(&dir, "backup-999.zip").is_err());
+    }
+
+    #[test]
+    fn deleting_removes_just_that_backup_and_refuses_other_names() {
+        let (_t, dir) = project();
+        let a = create_at(&dir, 10).unwrap();
+        let b = create_at(&dir, 20).unwrap();
+        delete(&dir, &a.name).unwrap();
+        assert_eq!(list(&dir).iter().map(|x| x.name.clone()).collect::<Vec<_>>(), vec![b.name.clone()]);
+        delete(&dir, &a.name).unwrap(); // already gone is fine
+        assert!(delete(&dir, "../project.json").is_err());
+        assert!(delete(&dir, "binder.json").is_err());
+        assert!(dir.join("project.json").exists());
+        assert_eq!(list(&dir).len(), 1);
     }
 
     #[test]

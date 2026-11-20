@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { type ActivityAction, type ActivityItem, type BackupInfo, buildActivity, formatSize, timeAgo, type SnapshotInfo } from "./activity";
 import { flushAll, saveHistoryAll } from "./SceneEditor";
+import { Icon } from "./icons";
 import { MOD } from "./platform";
 import { useStore } from "./store";
 
@@ -78,6 +79,16 @@ export function ActivityPanel() {
     }
   };
 
+  const deleteBackup = async (b: BackupInfo) => {
+    if (!window.confirm(`Delete the backup from ${new Date(b.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}? This cannot be undone.`)) return;
+    try {
+      await invoke("delete_backup", { dir, name: b.name });
+      setBackups((l) => l.filter((x) => x.name !== b.name));
+    } catch (e) {
+      useStore.getState().set({ error: `Could not delete the backup: ${e}` });
+    }
+  };
+
   const run = (a: ActivityAction) => {
     const s = useStore.getState();
     if (a.kind === "binder-undo") s.undoBinderSteps(a.steps);
@@ -116,9 +127,14 @@ export function ActivityPanel() {
                   <span className="activity-title">{new Date(b.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
                   <span className="activity-meta muted">{formatSize(b.size)}</span>
                 </div>
-                <button className="activity-act" disabled={busy} onClick={() => void restoreCopy(b)}>
-                  Restore as copy
-                </button>
+                <div className="activity-acts">
+                  <button className="activity-act" disabled={busy} onClick={() => void restoreCopy(b)}>
+                    Restore as copy
+                  </button>
+                  <button className="icon-btn small" aria-label="Delete this backup" data-tip="Delete this backup" disabled={busy} onClick={() => void deleteBackup(b)}>
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
