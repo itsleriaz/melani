@@ -6,7 +6,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import { allHandles, getActiveEditor, onActiveChange, type EditorHandle } from "./editorRegistry";
 import { Icon } from "./icons";
 import { MOD } from "./platform";
-import { docMatches, findAll, FIND_META, replaceMatches } from "./search";
+import { docMatches, findAll, FIND_META, patternError, replaceMatches } from "./search";
 import { useStore } from "./store";
 
 /** The editors on screen, top to bottom. */
@@ -30,6 +30,7 @@ export function FindBar() {
   const [q, setQ] = useState("");
   const [caseSensitive, setCase] = useState(false);
   const [wholeWord, setWhole] = useState(false);
+  const [regex, setRegex] = useState(false);
   const [pos, setPos] = useState(0);
   const [total, setTotal] = useState(0);
   const [editors, setEditors] = useState(0);
@@ -90,7 +91,7 @@ export function FindBar() {
 
   useEffect(() => {
     const hs = sortedHandles();
-    const opts = { caseSensitive, wholeWord };
+    const opts = { caseSensitive, wholeWord, regex };
     const per = hs.map((h) => (q ? docMatches(h.editor.state.doc, q, opts).length : 0));
     const n = per.reduce((a, b) => a + b, 0);
     const idx = n ? Math.min(pos, n - 1) : -1;
@@ -107,7 +108,7 @@ export function FindBar() {
       scroll.current = false;
       requestAnimationFrame(() => document.querySelector(".editor-scroll .search-hit.current")?.scrollIntoView({ block: "center" }));
     }
-  }, [q, caseSensitive, wholeWord, pos, tick]);
+  }, [q, caseSensitive, wholeWord, regex, pos, tick]);
 
   // Closing clears the highlights.
   useEffect(
@@ -133,7 +134,8 @@ export function FindBar() {
     scroll.current = true;
   };
   const idx = total ? Math.min(pos, total - 1) : -1;
-  const opts = { caseSensitive, wholeWord };
+  const opts = { caseSensitive, wholeWord, regex };
+  const bad = patternError(q, opts);
 
   /** Replace the highlighted match. The next one slides into its place, so it becomes the current one. */
   const replaceCurrent = () => {
@@ -189,7 +191,7 @@ export function FindBar() {
           <input
             ref={input}
             value={q}
-            placeholder="Find in this text"
+            placeholder={regex ? "Find (regular expression)" : "Find in this text"}
             aria-label="Find in this text"
             onChange={(e) => retype(e.target.value)}
             onKeyDown={(e) => {
@@ -198,7 +200,7 @@ export function FindBar() {
             }}
           />
           <span className="find-count muted" aria-live="polite">
-            {!q ? "" : editors === 0 ? "No text here" : total ? `${idx + 1} of ${total}` : "No results"}
+            {!q ? "" : bad ? bad : editors === 0 ? "No text here" : total ? `${idx + 1} of ${total}` : "No results"}
           </span>
         </div>
         <button className={`toggle-btn ${caseSensitive ? "on" : ""}`} aria-pressed={caseSensitive} data-tip="Match case" onClick={() => (setCase(!caseSensitive), setPos(0))}>
@@ -206,6 +208,9 @@ export function FindBar() {
         </button>
         <button className={`toggle-btn word ${wholeWord ? "on" : ""}`} aria-pressed={wholeWord} data-tip="Whole words only" onClick={() => (setWhole(!wholeWord), setPos(0))}>
           ab
+        </button>
+        <button className={`toggle-btn ${regex ? "on" : ""}`} aria-pressed={regex} data-tip="Regular expression. In replace, $1 and $& stand for what matched." onClick={() => (setRegex(!regex), setPos(0), setNote(null))}>
+          .*
         </button>
         <button className="icon-btn small" aria-label="Previous match" data-tip="Previous (Shift+Enter)" disabled={!total} onClick={() => step(-1)}>
           <Icon name="chevronUp" size={14} />

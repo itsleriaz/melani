@@ -12,12 +12,60 @@ import { ORIGINAL, SUGGESTION } from "./suggestions";
 export interface MatchOptions {
   caseSensitive: boolean;
   wholeWord: boolean;
+  /** Treat the query as a regular expression. Only the find bar uses this: it is the one place the JS engine alone decides the matches. */
+  regex?: boolean;
 }
 
 const WORD = /[\p{L}\p{N}_]/u;
 
+/** The query as a RegExp (global, Unicode), or an error message when it is not a valid pattern. */
+export function compilePattern(query: string, opts: MatchOptions): RegExp | string {
+  try {
+    const src = opts.wholeWord ? `(?<![\\p{L}\\p{N}_])(?:${query})(?![\\p{L}\\p{N}_])` : query;
+    return new RegExp(src, opts.caseSensitive ? "gu" : "giu");
+  } catch {
+    return "Invalid pattern";
+  }
+}
+
+/** Why the query cannot be searched, or null when it is fine (or not a regex). */
+export function patternError(query: string, opts: MatchOptions): string | null {
+  if (!opts.regex || !query) return null;
+  const r = compilePattern(query, opts);
+  return typeof r === "string" ? r : null;
+}
+
+/** Every non-empty regex match with its capture groups, left to right. */
+function regexMatches(text: string, query: string, opts: MatchOptions): { start: number; end: number; m: RegExpExecArray }[] {
+  const re = compilePattern(query, opts);
+  const out: { start: number; end: number; m: RegExpExecArray }[] = [];
+  if (typeof re === "string") return out;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m[0] === "") re.lastIndex++; // a pattern that can match nothing must not loop forever
+    else out.push({ start: m.index, end: m.index + m[0].length, m });
+  }
+  return out;
+}
+
+/** The replacement text for one regex match: $1, $<name>, $& and $$ work as in JavaScript. */
+export function expandReplacement(replacement: string, m: RegExpExecArray): string {
+  return replacement.replace(/\$(\$|&|\d{1,2}|<([^>]+)>)/g, (all, tok: string, name?: string) => {
+    if (tok === "$") return "$";
+    if (tok === "&") return m[0];
+    if (name !== undefined) return m.groups?.[name] ?? "";
+    const n = Number(tok);
+    if (tok.length === 2 && n >= m.length) {
+      // "$10" with fewer than ten groups is group 1 followed by a 0.
+      const first = Number(tok[0]);
+      return first > 0 && first < m.length ? (m[first] ?? "") + tok[1] : all;
+    }
+    return n > 0 && n < m.length ? (m[n] ?? "") : all;
+  });
+}
+
 /** [start, end) offsets of every match, left to right, non-overlapping. */
 export function findAll(text: string, query: string, opts: MatchOptions): [number, number][] {
+  if (opts.regex) return query ? regexMatches(text, query, opts).map((r) => [r.start, r.end]) : [];
   const out: [number, number][] = [];
   if (!query || query.length > text.length) return out;
   const hay = opts.caseSensitive ? text : text.toLowerCase();
@@ -40,10 +88,13 @@ export function findAll(text: string, query: string, opts: MatchOptions): [numbe
   return out;
 }
 
-/** Document ranges of every match. */
-export function docMatches(doc: PMNode, query: string, opts: MatchOptions): { from: number; to: number }[] {
-  const out: { from: number; to: number }[] = [];
-  for (const b of collectBlocks(doc)) for (const [s, e] of findAll(b.text, query, opts)) out.push({ from: b.pos + s, to: b.pos + e });
+/** Document ranges of every match (with the regex match, when the query is one, for its capture groups). */
+export function docMatches(doc: PMNode, query: string, opts: MatchOptions): { from: number; to: number; m?: RegExpExecArray }[] {
+  const out: { from: number; to: number; m?: RegExpExecArray }[] = [];
+  for (const b of collectBlocks(doc)) {
+    if (opts.regex) for (const r of query ? regexMatches(b.text, query, opts) : []) out.push({ from: b.pos + r.start, to: b.pos + r.end, m: r.m });
+    else for (const [s, e] of findAll(b.text, query, opts)) out.push({ from: b.pos + s, to: b.pos + e });
+  }
   return out;
 }
 
@@ -60,7 +111,7 @@ export function replaceMatches(state: EditorState, query: string, opts: MatchOpt
   if (!todo.length) return picked.length ? { tr: state.tr, count: 0, skipped: picked.length } : null;
   const tr = state.tr;
   // Back to front, so earlier positions are not shifted by later edits.
-  for (let i = todo.length - 1; i >= 0; i--) tr.insertText(replacement, todo[i].from, todo[i].to);
+  for (let i = todo.length - 1; i >= 0; i--) tr.insertText(opts.regex && todo[i].m ? expandReplacement(replacement, todo[i].m!) : replacement, todo[i].from, todo[i].to);
   return { tr, count: todo.length, skipped: picked.length - todo.length };
 }
 

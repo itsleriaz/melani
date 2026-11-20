@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "@tiptap/pm/model";
 import { EditorState } from "@tiptap/pm/state";
-import { replaceMatches } from "./search";
+import { compilePattern, docMatches, expandReplacement, findAll, patternError, replaceMatches } from "./search";
 
 const schema = new Schema({
   nodes: { doc: { content: "paragraph+" }, paragraph: { content: "text*" }, text: {} },
@@ -58,5 +58,57 @@ describe("replaceMatches", () => {
   it("reports when every match was inside a suggestion", () => {
     const s = state(p(["cat", "suggestion"]));
     expect(replaceMatches(s, "cat", opts, "dog")).toMatchObject({ count: 0, skipped: 1 });
+  });
+});
+
+describe("regular expressions", () => {
+  const rx = { caseSensitive: false, wholeWord: false, regex: true };
+
+  it("finds matches by pattern, ignoring case unless asked", () => {
+    expect(findAll("Cat cot cut", "c[ao]t", rx)).toEqual([[0, 3], [4, 7]]);
+    expect(findAll("Cat cot", "c[ao]t", { ...rx, caseSensitive: true })).toEqual([[4, 7]]);
+  });
+
+  it("applies whole-word to the pattern, not to its pieces", () => {
+    expect(findAll("cat concat cat", "cat|con", { ...rx, wholeWord: true })).toEqual([[0, 3], [11, 14]]);
+  });
+
+  it("ignores empty matches and cannot loop on them", () => {
+    expect(findAll("aaa b", "x*", rx)).toEqual([]);
+    expect(findAll("a1b22", "\\d*", rx)).toEqual([[1, 2], [3, 5]]);
+  });
+
+  it("reports an invalid pattern instead of throwing", () => {
+    expect(patternError("(unclosed", rx)).toBe("Invalid pattern");
+    expect(patternError("(unclosed", { ...rx, regex: false })).toBeNull();
+    expect(patternError("", rx)).toBeNull();
+    expect(findAll("text", "(unclosed", rx)).toEqual([]);
+    expect(typeof compilePattern("[", rx)).toBe("string");
+  });
+
+  it("treats the query literally when regex is off", () => {
+    expect(findAll("a.c abc", "a.c", { caseSensitive: false, wholeWord: false })).toEqual([[0, 3]]);
+  });
+
+  it("expands $1, $<name>, $& and $$ in a replacement", () => {
+    const m = /(\w+) (?<last>\w+)/.exec("Jane Doe")!;
+    expect(expandReplacement("$2, $1", m)).toBe("Doe, Jane");
+    expect(expandReplacement("$<last>!", m)).toBe("Doe!");
+    expect(expandReplacement("[$&]", m)).toBe("[Jane Doe]");
+    expect(expandReplacement("costs $$5", m)).toBe("costs $5");
+    expect(expandReplacement("$9 and $0", m)).toBe("$9 and $0");
+    expect(expandReplacement("$10", m)).toBe("Jane0");
+  });
+
+  it("replaces using capture groups, across paragraphs", () => {
+    const s = state(p(["Jane Doe, John Smith."]), p(["Ann Lee."]));
+    const r = replaceMatches(s, "(\\w+) (\\w+)", rx, "$2 $1")!;
+    expect(r.count).toBe(3);
+    expect(s.apply(r.tr).doc.textContent).toBe("Doe Jane, Smith John.Lee Ann.");
+  });
+
+  it("finds the same ranges in the document as in the text", () => {
+    const s = state(p(["one 12 two"]), p(["34 three"]));
+    expect(docMatches(s.doc, "\\d+", rx).map((m) => [m.from, m.to])).toEqual([[5, 7], [13, 15]]);
   });
 });
