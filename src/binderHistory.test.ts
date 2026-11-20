@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { COALESCE_MS, MAX_ENTRIES, pickSelection, pushEntry, type BinderEntry } from "./binderHistory";
+import { COALESCE_MS, fingerprint, MAX_ENTRIES, parseBinderHistory, pickSelection, pushEntry, SAVED_STEPS, serializeBinderHistory, type BinderEntry } from "./binderHistory";
 import { newNode, type BinderNode } from "./tree";
 
 const entry = (label: string, at: number, nodes: BinderNode[] = []): BinderEntry => ({ label, nodes, selectedId: null, at });
@@ -38,5 +38,28 @@ describe("binder history", () => {
     expect(pickSelection([chapter], "gone", "s1")).toBe("s1");
     expect(pickSelection([chapter], "gone", "gone2")).toBe("s1");
     expect(pickSelection([], "x", null)).toBeNull();
+  });
+
+  it("saves and reloads the stacks while the binder is unchanged", () => {
+    const now = [newNode("a", "scene", "A")];
+    const before = [newNode("a", "scene", "Old")];
+    const raw = serializeBinderHistory([entry("Rename", 5, before)], [], now);
+    const h = parseBinderHistory(raw, now);
+    expect(h?.undo.map((e) => e.label)).toEqual(["Rename"]);
+    expect(h?.undo[0].nodes).toEqual(before);
+  });
+
+  it("drops the history when the binder changed outside the app", () => {
+    const raw = serializeBinderHistory([entry("Rename", 5)], [], [newNode("a", "scene", "A")]);
+    expect(parseBinderHistory(raw, [newNode("a", "scene", "Edited elsewhere")])).toBeNull();
+  });
+
+  it("saves only the last steps and rejects damaged files", () => {
+    const nodes = [newNode("a", "scene", "A")];
+    let s: BinderEntry[] = [];
+    for (let i = 0; i < SAVED_STEPS + 10; i++) s = pushEntry(s, entry(`e${i}`, i * 10_000));
+    expect(parseBinderHistory(serializeBinderHistory(s, [], nodes), nodes)?.undo).toHaveLength(SAVED_STEPS);
+    expect(parseBinderHistory("{ nope", nodes)).toBeNull();
+    expect(parseBinderHistory(JSON.stringify({ v: 1, fp: fingerprint(nodes), undo: [{ label: 1 }], redo: [] }), nodes)).toBeNull();
   });
 });

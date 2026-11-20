@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CodexEntry, emptyEntry } from "./codexTypes";
 import { emptyStats, Goals, parseStats, recordTotal, Stats } from "./stats";
 import { Collection, defaultRule } from "./collectionRules";
-import { BinderEntry, pickSelection, pushEntry } from "./binderHistory";
+import { BinderEntry, parseBinderHistory, pickSelection, pushEntry, serializeBinderHistory } from "./binderHistory";
 import { addChild, BinderNode, canContain, findNode, findParent, leaves, mapNodes, moveNode, moveNodes, orderedIds, topLevelIds, newNode, NodeType, removeNode, updateNode, DropPos } from "./tree";
 
 /** What project.json holds. */
@@ -208,6 +208,8 @@ interface State {
 
 /** Set by the editor module so a duplicate copies text that is saved, not stale. */
 let flushPending: () => Promise<void> = async () => {};
+/** Write the binder's undo history now, if a write is waiting. Set up by the store. */
+export let flushBinderHistory: () => Promise<void> = async () => {};
 export const setFlushPending = (f: () => Promise<void>) => {
   flushPending = f;
 };
@@ -222,12 +224,29 @@ export const useStore = create<State>((set, get) => {
       if (dir) void invoke("write_stats", { dir, content: JSON.stringify(stats, null, 2) }).catch((e) => set({ error: String(e) }));
     }, 1000);
   };
+  // The binder's undo history goes to disk shortly after it changes, and when the project closes.
+  let binderHistoryTimer: number | undefined;
+  const writeBinderHistory = async () => {
+    window.clearTimeout(binderHistoryTimer);
+    binderHistoryTimer = undefined;
+    const { dir, binderUndo, binderRedo, nodes } = get();
+    if (!dir) return;
+    const op = binderUndo.length || binderRedo.length ? invoke("write_history", { dir, name: "binder", content: serializeBinderHistory(binderUndo, binderRedo, nodes) }) : invoke("clear_history", { dir, name: "binder" });
+    await op.catch(() => {
+      /* history is a convenience; never let it get in the way */
+    });
+  };
+  flushBinderHistory = async () => {
+    if (binderHistoryTimer !== undefined) await writeBinderHistory();
+  };
   /** Write the binder. `label` names the edit for undo; pass null for a change that must not be undoable. */
   const saveBinder = async (nodes: BinderNode[], label: string | null = "Edit") => {
     const dir = get().dir;
     if (label) set({ binderUndo: pushEntry(get().binderUndo, { label, nodes: get().nodes, selectedId: get().selectedId, at: Date.now() }), binderRedo: [] });
     set({ nodes });
     if (!dir) return;
+    window.clearTimeout(binderHistoryTimer);
+    binderHistoryTimer = window.setTimeout(() => void writeBinderHistory(), 500);
     try {
       await invoke("save_binder", { dir, binder: { nodes } });
     } catch (e) {
@@ -244,6 +263,12 @@ export const useStore = create<State>((set, get) => {
     persist("recent", recent);
     const first = o.binder.nodes.flatMap(leaves)[0];
     set({ dir, title: o.meta.title, meta: o.meta, nodes: o.binder.nodes, binderUndo: [], binderRedo: [], historyScope: "text", uncleanExit: o.uncleanExit, recovery, selectedId: first?.id ?? null, recent, error: null, codex: [], codexId: null, refId: null, stats: emptyStats(), countsLoaded: false, statsLoaded: false, diff: null, view: "text", bookOutline: false, collections: [], collectionId: null, mentions: {} });
+    void invoke<string>("read_history", { dir, name: "binder" })
+      .then((raw) => {
+        const h = raw ? parseBinderHistory(raw, get().nodes) : null;
+        if (h && get().dir === dir && !get().binderUndo.length && !get().binderRedo.length) set({ binderUndo: h.undo, binderRedo: h.redo });
+      })
+      .catch(() => {});
     void invoke<string>("read_stats", { dir })
       .then((raw) => get().dir === dir && set({ stats: parseStats(raw), statsLoaded: true }))
       .catch(() => get().dir === dir && set({ statsLoaded: true }));
@@ -405,6 +430,7 @@ export const useStore = create<State>((set, get) => {
     },
     closeProject: async () => {
       const dir = get().dir;
+      await flushBinderHistory();
       if (dir) await invoke("close_project", { dir }).catch(() => {});
       set({ dir: null, nodes: [], binderUndo: [], binderRedo: [], selectedId: null, counts: {}, recovery: [] });
     },

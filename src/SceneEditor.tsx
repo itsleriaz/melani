@@ -20,8 +20,8 @@ import { useAi } from "./aiStore";
 import type { Message, SceneComment } from "./ai";
 import type { Mention } from "./codexTypes";
 import { pendingSids, restoreRecords, stripPending, SuggestionRecord, toRecords } from "./suggestions";
-import { setFlushPending, useStore } from "./store";
-import { restoreHistory, stashHistory } from "./sceneHistory";
+import { flushBinderHistory, setFlushPending, useStore } from "./store";
+import { loadStash, restoreHistory, stashHistory } from "./sceneHistory";
 
 export { getActiveEditor } from "./editorRegistry";
 
@@ -35,6 +35,15 @@ const SCAN_DELAY_MS = 400;
 
 /** Pending saves register here so the app can flush them before closing. */
 export const flushers = new Set<() => Promise<void>>();
+
+/** Mounted scenes write their undo history here, so it survives closing the app. */
+const historySavers = new Set<() => Promise<void>>();
+
+/** Save every open scene's undo history and the binder's. Called when leaving the project or quitting. */
+export async function saveHistoryAll() {
+  await Promise.all([...historySavers].map((f) => f()));
+  await flushBinderHistory();
+}
 
 /** Write every unsaved scene to disk now. */
 export async function flushAll() {
@@ -265,10 +274,11 @@ export function SceneEditor({ id }: { id: string }) {
     if (!ed) return;
     // Loading the disk version over unsaved edits discards them, so drop their journal too.
     if (dirty.current) journal(() => invoke("clear_recovery", { dir, id }));
-    const [text, m, metaRaw] = await Promise.all([
+    const [text, m, metaRaw, stash] = await Promise.all([
       invoke<string>("read_scene", { dir, id }),
       invoke<number>("scene_modified", { dir, id }),
       invoke<string>("read_scene_meta", { dir, id }).catch(() => "{}"),
+      loadStash(dir, id),
     ]);
     let meta: Sidecar = {};
     try {
@@ -296,7 +306,7 @@ export function SceneEditor({ id }: { id: string }) {
     applyComments(ed, comments);
     useAi.getState().setPending(id, pendingSids(ed.state.doc).length);
     // The load itself must not be undoable; bring back this scene's earlier undo steps if its text is unchanged.
-    restoreHistory(dir, id, ed);
+    restoreHistory(stash, ed);
     loading.current = false;
 
     lastMeta.current = metaRaw.trim() === "{}" ? "" : metaRaw;
@@ -356,8 +366,14 @@ export function SceneEditor({ id }: { id: string }) {
   // Register for flush-on-close; flush on unmount (e.g. switching scenes).
   useEffect(() => {
     flushers.add(saveNow);
+    const saveHistory = async () => {
+      const ed = editorRef.current;
+      if (ed && !ed.isDestroyed && !loading.current) await stashHistory(dir, id, ed);
+    };
+    historySavers.add(saveHistory);
     return () => {
       flushers.delete(saveNow);
+      historySavers.delete(saveHistory);
       // Keep the undo steps for when the scene is opened again (not from a half-loaded editor).
       const ed = editorRef.current;
       if (ed && !ed.isDestroyed && !loading.current) stashHistory(dir, id, ed);

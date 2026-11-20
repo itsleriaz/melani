@@ -7,6 +7,7 @@ mod context;
 mod docx;
 mod docx_out;
 mod epub_out;
+mod history;
 mod import;
 mod md;
 mod mentions;
@@ -248,8 +249,21 @@ async fn delete_scenes(dir: String, ids: Vec<String>) -> Result<(), String> {
     for id in &ids {
         project::delete_scene(Path::new(&dir), id).map_err(s)?;
         recovery::clear(Path::new(&dir), id).map_err(s)?;
+        history::clear(Path::new(&dir), id).map_err(s)?;
     }
     Ok(())
+}
+#[tauri::command]
+async fn write_history(dir: String, name: String, content: String) -> Result<(), String> {
+    history::write(Path::new(&dir), &name, &content).map_err(s)
+}
+#[tauri::command]
+async fn read_history(dir: String, name: String) -> Result<String, String> {
+    history::read(Path::new(&dir), &name).map_err(s)
+}
+#[tauri::command]
+async fn clear_history(dir: String, name: String) -> Result<(), String> {
+    history::clear(Path::new(&dir), &name).map_err(s)
 }
 #[tauri::command]
 async fn clear_recovery(dir: String, id: String) -> Result<(), String> {
@@ -314,6 +328,9 @@ pub fn run() {
             write_scene_meta,
             write_recovery,
             clear_recovery,
+            write_history,
+            read_history,
+            clear_history,
             delete_scenes,
             list_recovery,
             restore_recovery,

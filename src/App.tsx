@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Binder } from "./Binder";
 import { Inspector } from "./Inspector";
 import { Palette, Command } from "./Overlays";
-import { SceneEditor, flushAll, getActiveEditor } from "./SceneEditor";
+import { SceneEditor, flushAll, getActiveEditor, saveHistoryAll } from "./SceneEditor";
 import { Corkboard } from "./Corkboard";
 import { Outliner } from "./Outliner";
 import { FindBar } from "./FindBar";
@@ -441,7 +441,7 @@ function AssistMenu() {
 }
 
 /** Save everything, release the project, and show the start screen. */
-const closeToStart = () => flushAll().then(() => useStore.getState().closeProject());
+const closeToStart = () => flushAll().then(saveHistoryAll).then(() => useStore.getState().closeProject());
 
 function TitleBar() {
   const s = useStore();
@@ -694,7 +694,6 @@ function Workspace() {
       const st = useStore.getState();
       if (e.key === "Escape" && st.focusMode && !st.paletteOpen) return st.set({ focusMode: false });
       if (!mod) return;
-      const go = (f: () => void) => (e.preventDefault(), f());
       // Cmd+Z in the text is the editor's own; elsewhere it follows the area you last used.
       if (k === "z" || (k === "y" && !IS_MAC)) {
         const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
@@ -705,6 +704,7 @@ function Workspace() {
         }
         return;
       }
+      const go = (f: () => void) => (e.preventDefault(), f());
       if (e.shiftKey && k === "f") go(() => st.openSearch());
       else if (k === "f") go(() => st.set({ findOpen: true, findFocus: st.findFocus + 1 }));
       else if (k === "k" || (e.shiftKey && k === "p")) go(() => st.set({ paletteOpen: true }));
@@ -722,7 +722,6 @@ function Workspace() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const focus = s.focusMode;
   // Remember whether you last used the binder or the text, so undo and redo act on the right one.
   useEffect(() => {
     const mark = (e: Event) => {
@@ -739,6 +738,7 @@ function Workspace() {
     };
   }, []);
 
+  const focus = s.focusMode;
   // Entering focus mode puts the cursor back in the text, so the current paragraph lights up.
   useEffect(() => {
     if (focus) getActiveEditor()?.commands.focus();
@@ -854,6 +854,7 @@ export default function App() {
   useEffect(() => {
     const p = getCurrentWindow().onCloseRequested(async () => {
       await flushAll();
+      await saveHistoryAll();
       await useStore.getState().closeProject();
     });
     return () => void p.then((un) => un());

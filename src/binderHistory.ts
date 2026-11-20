@@ -26,3 +26,35 @@ export function pickSelection(nodes: BinderNode[], current: string | null, saved
   for (const id of [current, saved]) if (id && findNode(nodes, id)) return id;
   return nodes.flatMap(leaves)[0]?.id ?? null;
 }
+
+/** What is kept between sessions: this many steps each way. */
+export const SAVED_STEPS = 30;
+
+/** A short fingerprint of a binder, to tell whether it is still the one the history was recorded against. */
+export function fingerprint(nodes: BinderNode[]): string {
+  const s = JSON.stringify(nodes);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return `${s.length}:${h.toString(16)}`;
+}
+
+export function serializeBinderHistory(undo: BinderEntry[], redo: BinderEntry[], nodes: BinderNode[]): string {
+  return JSON.stringify({ v: 1, fp: fingerprint(nodes), undo: undo.slice(-SAVED_STEPS), redo: redo.slice(-SAVED_STEPS) });
+}
+
+const isEntry = (e: unknown): e is BinderEntry => {
+  const x = e as BinderEntry | null;
+  return !!x && typeof x.label === "string" && Array.isArray(x.nodes) && typeof x.at === "number" && (x.selectedId === null || typeof x.selectedId === "string");
+};
+
+/** The saved stacks, but only if the binder is exactly as it was when they were saved (else it changed outside the app). */
+export function parseBinderHistory(raw: string, nodes: BinderNode[]): { undo: BinderEntry[]; redo: BinderEntry[] } | null {
+  try {
+    const j = JSON.parse(raw) as { v?: number; fp?: string; undo?: unknown; redo?: unknown };
+    if (j.v !== 1 || j.fp !== fingerprint(nodes) || !Array.isArray(j.undo) || !Array.isArray(j.redo)) return null;
+    if (!j.undo.every(isEntry) || !j.redo.every(isEntry)) return null;
+    return { undo: j.undo, redo: j.redo };
+  } catch {
+    return null;
+  }
+}
