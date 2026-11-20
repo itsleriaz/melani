@@ -21,6 +21,7 @@ import type { Message, SceneComment } from "./ai";
 import type { Mention } from "./codexTypes";
 import { pendingSids, restoreRecords, stripPending, SuggestionRecord, toRecords } from "./suggestions";
 import { setFlushPending, useStore } from "./store";
+import { restoreHistory, stashHistory } from "./sceneHistory";
 
 export { getActiveEditor } from "./editorRegistry";
 
@@ -294,6 +295,8 @@ export function SceneEditor({ id }: { id: string }) {
     useAi.getState().setSceneComments(id, comments);
     applyComments(ed, comments);
     useAi.getState().setPending(id, pendingSids(ed.state.doc).length);
+    // The load itself must not be undoable; bring back this scene's earlier undo steps if its text is unchanged.
+    restoreHistory(dir, id, ed);
     loading.current = false;
 
     lastMeta.current = metaRaw.trim() === "{}" ? "" : metaRaw;
@@ -355,9 +358,12 @@ export function SceneEditor({ id }: { id: string }) {
     flushers.add(saveNow);
     return () => {
       flushers.delete(saveNow);
+      // Keep the undo steps for when the scene is opened again (not from a half-loaded editor).
+      const ed = editorRef.current;
+      if (ed && !ed.isDestroyed && !loading.current) stashHistory(dir, id, ed);
       void saveNow();
     };
-  }, [saveNow]);
+  }, [saveNow, dir, id]);
 
   // Detect edits made outside the app (external editor, file-sync tool).
   useEffect(() => {
